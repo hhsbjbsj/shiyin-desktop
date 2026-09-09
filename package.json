@@ -1,7 +1,7 @@
 {
   "name": "shiyin",
-  "version": "0.4.0",
-  "description": "拾音 - 纯本地音频转文字工具（语音识别 ASR），基于 whisper.cpp，文件不出电脑",
+  "version": "1.0.0",
+  "description": "拾音 · 本地音频/视频/链接转文字（whisper.cpp 引擎，纯本地离线，文件不出电脑）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -22,5 +22,8 @@
     "chinese-conv": "^1.0.2",
     "express": "^5.2.1",
     "multer": "^2.3.0"
+  },
+  "optionalDependencies": {
+    "playwright-core": "^1.62.1"
   }
 }

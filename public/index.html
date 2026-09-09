@@ -1,11 +1,11 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>拾音 · 本地音频/视频转文字</title>
+<title>拾音 · 本地音频/视频/链接转文字</title>
 <meta name="theme-color" content="#55b3ee">
-<link rel="icon" href="/app-icon.ico?v=5">
+<link rel="icon" href="/app-icon.ico?v=7">
 <link rel="apple-touch-icon" href="/app-icon-512.png">
 <link rel="manifest" href="/manifest.json">
 <style>
@@ -17,7 +17,7 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--ink); font-family: "Microsoft YaHei", system-ui, sans-serif; line-height: 1.6; }
   header { background: linear-gradient(135deg, #3f8fdc, #6ec1f2); color: #fff; padding: 18px 28px; display: flex; align-items: center; gap: 14px; }
-  header .logo { font-size: 26px; }
+  header .logo { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; box-shadow: 0 2px 6px rgba(0,0,0,.18); }
   header h1 { font-size: 20px; font-weight: 700; letter-spacing: 1px; }
   header .sub { font-size: 12.5px; opacity: .85; margin-top: 1px; }
   header .spacer { flex: 1; }
@@ -56,7 +56,7 @@
   .badge.done { background: #e2f5ea; color: var(--ok); }
   .badge.failed { background: #fbe9e7; color: var(--err); }
   .bar { height: 6px; background: #e9eef4; border-radius: 99px; margin-top: 9px; overflow: hidden; }
-  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #55b3ee, #7fd0f8); border-radius: 99px; transition: width .5s; }
+  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #55b3ee, #6ec1f2); border-radius: 99px; transition: width .5s; }
   .task .result { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; }
   .rtabs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   .rtab { font-size: 12px; padding: 3px 12px; border-radius: 999px; background: #f0f3f7; color: #5b6575; cursor: pointer; border: none; }
@@ -87,7 +87,7 @@
   .mstatus.ok { color: var(--ok); }
   .mstatus.off { color: var(--muted); }
   .mbar { height: 5px; background: #e9eef4; border-radius: 99px; margin-top: 7px; overflow: hidden; }
-  .mbar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #3f8fdc, #6ec1f2); transition: width .5s; }
+  .mbar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #3f8fdc, #efae63); transition: width .5s; }
   .mspeed { font-size: 11px; color: var(--muted); margin-top: 3px; }
 
   .note { font-size: 12px; color: var(--muted); }
@@ -117,6 +117,9 @@
   .vadopt label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
   .vadopt input { accent-color: var(--brand); }
   .vadopt .vhint { font-size: 11.5px; color: var(--warn); margin-left: 4px; }
+  .urlrow { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .urlrow input[type=text] { flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; font-size: 13px; background: #fbfcfe; }
+  .urlrow input[type=text]:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
   .player { width: 100%; margin-top: 8px; border-radius: 10px; background: #f0f3f7; }
   video.player { max-height: 260px; }
   .cuelist { margin-top: 8px; max-height: 300px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: #f7f9fc; }
@@ -134,17 +137,35 @@
 .listsearch { font-size: 12px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); width: 130px; }
 .listsearch:focus { outline: none; border-color: var(--brand); }
   .cueempty { padding: 16px; text-align: center; color: var(--muted); font-size: 12.5px; }
+  .srow input[type=password] { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; }
+  .srow input[type=password]:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
+  .sbtns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+  /* v0.9.1 字幕工具条 + AI 总结 */
+  .toolrow { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; flex-wrap: wrap; }
+  .toolrow .tl-hint { font-size: 11px; color: var(--muted); margin-right: 2px; }
+  .toolrow .offin { width: 76px; font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+  .toolrow .offin:focus { outline: none; border-color: var(--brand); }
+  .toolrow .statline { font-size: 11.5px; color: var(--muted); }
+  .toolrow .statline b { color: var(--ink); font-weight: 600; }
+  .aiout { width: 100%; min-height: 200px; max-height: 46vh; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.7; font-family: inherit; resize: vertical; background: #fbfcfe; }
+  .aimode { display: flex; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink); }
+  .aimode label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+  .aimode input { accent-color: var(--brand); }
+  .aihead { display: flex; align-items: center; gap: 10px; }
+  .aihead .ai-hint { font-size: 11.5px; color: var(--muted); flex: 1; }
+  .plt { display: inline-block; font-size: 10.5px; padding: 0 6px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); margin-left: 6px; vertical-align: 1px; }
 </style>
 </head>
 <body>
 
 <header>
-  <span class="logo">🐋</span>
+  <img class="logo" src="/app-icon.png?v=7" alt="拾音">
   <div>
     <h1>拾音</h1>
-    <div class="sub">本地音频 / 视频转文字 · whisper.cpp · 文件不出电脑</div>
+    <div class="sub">本地音频/视频/链接 → 文字 · whisper.cpp 引擎 · 文件不出电脑</div>
   </div>
   <div class="spacer"></div>
+  <button class="btn sm" id="cfgBtn" title="设置：自动落盘目录 / B站登录态">⚙ 设置</button>
   <span class="status" id="headStatus">连接中…</span>
 </header>
 
@@ -159,6 +180,10 @@
     <input type="file" id="fileInput" multiple accept="audio/*,video/*,.mp3,.wav,.m4a,.flac,.aac,.ogg,.wma,.mp4,.mkv,.mov,.avi,.flv,.ts" style="display:none">
     <div class="vadopt">
       <label title="用静音检测模型跳过静音段：长音频/播客更快，减少环境声幻觉"><input type="checkbox" id="useVad"> 🧹 跳过静音段（VAD，长音频更快）<span class="vhint" id="vadHint" style="display:none">需先下载静音检测模型</span></label>
+    </div>
+    <div class="urlrow" id="urlRow">
+      <input type="text" id="urlInput" placeholder="粘贴链接或分享文案（自动识别，多条用换行/逗号分隔）" spellcheck="false" autocomplete="off">
+      <button class="btn primary sm" id="urlGo">识别链接</button>
     </div>
     <div class="listhead">
       <span class="lt" id="listTitle">任务列表</span>
@@ -177,6 +202,8 @@
     <div class="card">
       <h2>💡 小贴士</h2>
       <ul class="note">
+        <li>识别完成自动落盘到：<b id="tipOutDir">…</b>（txt/srt/vtt/meta 四件套，可在 ⚙ 设置 修改）</li>
+        <li>粘贴视频链接可免下载直接识别（B站/抖音/快手/YouTube/直链）</li>
         <li>识别结果自动转为简体中文，可在文本框里直接修改</li>
         <li>保存时可选 txt / srt / vtt 格式、自定义文件名、选择保存位置</li>
         <li>无语音片段会标记「未检测到语音」，不产生空结果</li>
@@ -211,6 +238,65 @@
     <div class="sbtns">
       <button class="btn" id="saveCancel">取消</button>
       <button class="btn primary" id="saveGo">保存到本地</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="cfgMask">
+  <div class="modal">
+    <h3>⚙ 设置</h3>
+    <div class="srow">
+      <label class="slbl">自动落盘目录（识别完成自动写 txt/srt/vtt/meta 的位置）</label>
+      <input type="text" id="cfgOutDir" spellcheck="false" autocomplete="off">
+      <div class="shint" style="margin-top:8px" id="cfgOutHint"></div>
+    </div>
+    <div class="srow">
+      <label class="slbl">B站登录 Cookie · SESSDATA（可选）</label>
+      <input type="password" id="cfgSess" placeholder="sessdata=xxxx…" autocomplete="off" spellcheck="false">
+      <div class="shint" style="margin-top:8px">填了可解锁 B站官方 AI 字幕：有字幕的视频直接取字幕秒出（零算力，跳过转写）。仅存本机 settings.json，不会外传；建议用不常用的小号，泄露风险自担。</div>
+    </div>
+    <div class="srow">
+      <label class="slbl">AI 总结（可选，默认关闭；内容会发送到你填的端点 = 出本机）</label>
+      <input type="text" id="cfgAiEndpoint" placeholder="https://api.deepseek.com/chat/completions" spellcheck="false" autocomplete="off">
+      <div class="shint" style="margin-top:6px">端点需 OpenAI 兼容完整 URL（DeepSeek / 智谱 / 通义 / 任意中转都行）；Key 只存本机。
+      <input type="password" id="cfgAiKey" placeholder="sk-…" autocomplete="off" spellcheck="false" style="margin-top:6px">
+      <input type="text" id="cfgAiModel" placeholder="模型名（留空 = 端点默认）" spellcheck="false" autocomplete="off" style="margin-top:6px">
+      </div>
+    </div>
+    <div class="sbtns">
+      <button class="btn sm" id="cfgReset">恢复默认目录</button>
+      <span style="flex:1"></span>
+      <button class="btn sm" id="cfgCancel">取消</button>
+      <button class="btn primary sm" id="cfgSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="aiMask">
+  <div class="modal">
+    <div class="aihead">
+      <h3 style="margin:0">✨ AI 总结</h3>
+      <span class="ai-hint">字幕/全文发送到所配 AI 端点（默认关闭，内容出本机）。结果可编辑后复制或存为 .md</span>
+    </div>
+    <div class="srow" style="margin-top:10px">
+      <div class="aimode">
+        <label><input type="radio" name="aimode" value="summary" checked> 摘要 + 要点</label>
+        <label><input type="radio" name="aimode" value="bullets"> 纯要点列表</label>
+        <label><input type="radio" name="aimode" value="chapters"> 分章节</label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+        <button class="btn primary sm" id="aiGo">✨ 生成总结</button>
+        <span class="shint" id="aiStatus" style="flex:1"></span>
+      </div>
+    </div>
+    <div class="srow" style="margin-top:8px">
+      <textarea class="aiout" id="aiOut" placeholder="总结结果会显示在这里…" spellcheck="false"></textarea>
+    </div>
+    <div class="sbtns" style="margin-top:8px">
+      <button class="btn sm" id="aiCopy">📋 复制</button>
+      <button class="btn sm" id="aiSaveMd">💾 存为 .md</button>
+      <span style="flex:1"></span>
+      <button class="btn sm" id="aiCancel">关闭</button>
     </div>
   </div>
 </div>
@@ -340,6 +426,44 @@ async function uploadFiles(files) {
 
 drop.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => { uploadFiles([...fileInput.files]); fileInput.value = ''; });
+
+// ---------- 链接识别（粘贴 B站/抖音/快手/YouTube/直链：B站走官方 API、抖音/快手走 platforms 适配器、其余 yt-dlp） ----------
+async function submitUrl() {
+  const inp = document.getElementById("urlInput");
+  const raw = inp.value.trim();
+  if (!raw) { showToast("请先粘贴视频链接"); return; }
+  const urlRe = /https?:\/\/[A-Za-z0-9\-._~:\/?#@!$&*+,;=%[\]]+/i;
+  const urls = [...new Set(raw.split(/[\n,，;；]+/).map((s) => { const m = s.match(urlRe); return m ? m[0].replace(/[),.;，。]+$/, '') : null; }).filter(Boolean))];
+  if (!urls.length) { showToast("未识别到链接（请粘贴含 http(s):// 的网址或分享文案）"); return; }
+  inp.value = "";
+  if (urls.length === 1) { await submitUrlOne(urls[0]); return; }
+  showToast("已加入 " + urls.length + " 条链接，将按队列依次识别");
+  for (const u of urls) await submitUrlOne(u);
+}
+async function submitUrlOne(url) {
+  const tmpId = "url-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
+  const short = url.length > 64 ? url.slice(0, 61) + "…" : url;
+  tasks.unshift({ id: tmpId, file: short, link: true, status: "queued", progress: 0 });
+  expanded.add(tmpId);
+  render();
+  try {
+    const r = await fetch("/api/transcribe-url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+    const j = await r.json();
+    if (!r.ok) { throw new Error(j.error || "HTTP " + r.status); }
+    const t = tasks.find((x) => x.id === tmpId);
+    if (t) { t.id = j.taskId; t.file = short; t.status = "queued"; }
+    expanded.delete(tmpId); expanded.add(j.taskId);
+    pollTask(j.taskId); render();
+  } catch (e) {
+    const idx = tasks.findIndex((x) => x.id === tmpId);
+    if (idx >= 0) tasks.splice(idx, 1);
+    render();
+    showToast("识别失败：" + e.message);
+  }
+}
+document.getElementById('urlGo').addEventListener('click', submitUrl);
+document.getElementById('urlInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitUrl(); });
+
 ['dragover', 'dragenter'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('drag'); }));
 ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('drag'); }));
 drop.addEventListener('drop', (e) => uploadFiles([...e.dataTransfer.files]));
@@ -384,7 +508,7 @@ async function pollTask(id) {
           showToast('✅ 识别完成：' + (t ? t.file : ''));
           if (document.hidden) { // 页面在后台：标题闪烁提醒
             document.title = '✅ 识别完成 · ' + (t ? t.file : '') + ' — 拾音';
-            setTimeout(() => { if (!document.hidden) document.title = '拾音 · 本地音频/视频转文字'; }, 6000);
+            setTimeout(() => { if (!document.hidden) document.title = '拾音 · 本地音频/视频/链接转文字'; }, 6000);
           }
         }
         if (j.status === 'failed') showToast('❌ 识别失败：' + (j.error || ''));
@@ -438,7 +562,7 @@ function render() {
     let resultHtml = '';
     if (t.result) {
       if (t.result.noSpeech) {
-        resultHtml = '<div class="nospeech">🤫 未检测到语音（可能是纯音乐 / 环境声 / 空白）——下方为识别到的内容，可手动确认</div><textarea data-tarea="' + t.id + '" spellcheck="false">' + esc(getResult(t, 'txt')) + '</textarea>';
+        resultHtml = '<div class="result"><div class="rtabs"><span class="grow"></span><span class="rcount">' + (getResult(t, 'txt') || '').length + ' 字</span><button class="rtab act" data-copy="' + t.id + '">复制</button><button class="rtab act" data-save="' + t.id + '">保存</button></div><div class="nospeech">未检测到语音（可能是纯音乐 / 环境声 / 空白）——下方为识别到的内容，可手动确认</div><textarea data-tarea="' + t.id + '" spellcheck="false">' + esc(getResult(t, 'txt')) + '</textarea></div>';
       } else {
         const tabs = [['txt', '全文'], ['read', '📖 跟读'], ['srt', 'SRT 字幕'], ['vtt', 'VTT 字幕']];
         let curTab = t._tab || 'txt';
@@ -451,16 +575,28 @@ function render() {
             <span class="rcount">${count}</span>
             <button class="rtab act" data-copy="${t.id}">✂ 复制</button>
             <button class="rtab act" data-save="${t.id}">💾 保存</button>
+            <button class="rtab act" data-ai="${t.id}" title="字幕/全文一键总结（需先在 设置 配 AI 端点）">AI 总结</button>
           </div>
+          ${(curTab === 'srt' || curTab === 'vtt') && getResult(t, curTab) ? `<div class="toolrow" data-tools="${t.id}">
+            <span class="tl-hint">字幕工具：</span>
+            <button class="rtab act" data-off="-0.5" data-id="${t.id}">-0.5s</button>
+            <button class="rtab act" data-off="0.5" data-id="${t.id}">+0.5s</button>
+            <input class="offin" data-offin="${t.id}" type="number" step="0.5" value="0" title="整体偏移秒数（正=延后，负=提前）">
+            <button class="rtab act" data-offapply="${t.id}">应用</button>
+            <span class="rtab act" data-stats="${t.id}">统计</span>
+            <span class="rtab act" data-dl="${t.id}">下载 .${curTab}</span>
+          </div>` : ''}
           ${curTab === 'read' ? renderReadTab(t) : `<textarea data-tarea="${t.id}" spellcheck="false">${esc(getResult(t, curTab))}</textarea>`}
         </div>`;
       }
     }
+    const pltName = { douyin: '抖音', kuaishou: '快手', bilibili: 'B站', youtube: 'YouTube', direct: '直链' }[t.platform] || '';
     const errHtml = t.status === 'failed' && t.error ? `<div class="errmsg">❌ ${esc(t.error)}<button class="btn sm" style="margin-left:8px" data-retry="${t.id}">↻ 重试</button></div>` : '';
     return `<div class="task" id="task-${t.id}">
       <div class="row1">
-        <span class="fname" title="点击展开/收起结果" data-toggle="${t.id}">${esc(t.file)}</span>
-        <span class="fmeta">${t.sizeMB != null ? t.sizeMB + ' MB' : ''}${t.model ? ' · ' + shortModel(t.model) : ''}${t.useVad ? ' · 🧹 VAD' : ''}${t.elapsedSec ? ' · 用时 ' + t.elapsedSec + 's' : ''}</span>
+        <span class="fname" title="点击展开/收起结果" data-toggle="${t.id}">${esc(t.file)}</span>${pltName ? `<span class="plt">${pltName}</span>` : ''}
+        <span class="fmeta">${t.sizeMB != null ? t.sizeMB + ' MB' : ''}${t.durationSec ? ' · ' + fmtDur(t.durationSec) : ''}${(t.result && t.result.model) || t.model ? ' · ' + shortModel((t.result && t.result.model) || t.model) : ''}${t.useVad ? ' · 🧹 VAD' : ''}${t.elapsedSec ? ' · 用时 ' + t.elapsedSec + 's' : ''}</span>
+        ${t.status === 'done' && t.outDir ? '<span class="fmeta" style="color:var(--ok)">📥 已落盘</span>' : ''}
         ${st}
         <button class="delbtn" title="删除任务" data-del="${t.id}">✕</button>
       </div>
@@ -498,6 +634,91 @@ function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 function getResult(t, key) { return key === 'txt' ? (t.result.text || '') : (t.result[key] || ''); }
 function setResult(t, key, v) { if (key === 'txt') t.result.text = v; else t.result[key] = v; }
 
+// ---------- v0.9.1 字幕工具：时长格式化 / 整体偏移 / 统计 ----------
+function fmtDur(sec) {
+  const s = Math.max(0, Math.round(sec || 0));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+// 对 SRT/VTT 时间行整体偏移 sec 秒（可负）；fmt "srt" → 逗号毫秒，其他 → 点
+function shiftTimeText(text, sec, fmt) {
+  const sep = fmt === "srt" ? "," : ".";
+  return String(text || "").replace(/(\d{1,2}):(\d{2}):(\d{2})[,.]([0-9]{1,3})/g, (m, h, mi, s, ms) => {
+    let t = (+h) * 3600000 + (+mi) * 60000 + (+s) * 1000 + (+String(ms || "").padEnd(3, "0").slice(0, 3) || 0);
+    t = Math.max(0, Math.round(t + sec * 1000));
+    const H = Math.floor(t / 3600000), M = Math.floor((t % 3600000) / 60000), S = Math.floor((t % 60000) / 1000), MM = t % 1000;
+    return String(H).padStart(2, "0") + ":" + String(M).padStart(2, "0") + ":" + String(S).padStart(2, "0") + sep + String(MM).padStart(3, "0");
+  });
+}
+// 字幕统计：段数 / 纯字数 / 总时长（复用 parseCues）
+function subStats(text) {
+  const cues = parseCues(text);
+  const body = String(text || "")
+    .replace(/^\s*\d+\s*$/gm, "")
+    .replace(/\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}/g, "")
+    .replace(/^\s*[\d:.]+\s*$/gm, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, "");
+  let end = 0;
+  for (const c of cues) end = Math.max(end, c.end || 0);
+  return { cues: cues.length, chars: body.length, dur: fmtDur(end) };
+}
+
+// ---------- v0.9.1 AI 总结面板（端点自配，默认关） ----------
+let aiTaskId = null;
+const aiMask = document.getElementById("aiMask");
+function openAiPanel(tid) {
+  const t = tasks.find((x) => x.id === tid);
+  if (!t || !t.result || (!t.result.text && !t.result.srt)) { showToast("请先展开任务拿到结果再总结"); return; }
+  aiTaskId = tid;
+  const out = document.getElementById("aiOut");
+  if (out) out.value = "";
+  const st = document.getElementById("aiStatus");
+  if (st) st.textContent = "";
+  const btn = document.getElementById("aiGo");
+  if (btn) { btn.disabled = false; btn.textContent = "生成总结"; }
+  aiMask.classList.add("show");
+}
+async function runAiSummary() {
+  if (!aiTaskId) return;
+  const modeEl = document.querySelector("input[name=aimode]:checked");
+  const mode = modeEl ? modeEl.value : "summary";
+  const btn = document.getElementById("aiGo");
+  const st = document.getElementById("aiStatus");
+  if (btn) { btn.disabled = true; btn.textContent = "生成中…（约 10-60s）"; }
+  if (st) st.textContent = "";
+  try {
+    const r = await fetch("/api/summarize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskId: aiTaskId, mode }) });
+    const j = await r.json();
+    if (!r.ok) {
+      showToast("AI 总结失败：" + (j.error || r.status));
+      if ((j.error || "").includes("未配置")) showToast("请先在 设置 里配置 AI 端点与 Key（默认关闭，内容出本机）");
+    } else {
+      const out = document.getElementById("aiOut");
+      if (out) out.value = j.text;
+      if (st) st.textContent = "已基于 " + (j.chars || 0) + " 字内容生成（模式：" + ({ summary: "摘要+要点", bullets: "纯要点", chapters: "分章节" }[mode] || mode) + "）";
+    }
+  } catch { showToast("AI 总结失败（服务未运行？）"); }
+  if (btn) { btn.disabled = false; btn.textContent = "重新生成"; }
+}
+document.getElementById("aiGo").addEventListener("click", runAiSummary);
+document.getElementById("aiCopy").addEventListener("click", async () => {
+  const ta = document.getElementById("aiOut");
+  if (!ta || !ta.value) { showToast("还没有可复制的内容"); return; }
+  try { await navigator.clipboard.writeText(ta.value); showToast("已复制"); }
+  catch { ta.select(); document.execCommand("copy"); showToast("已复制"); }
+});
+document.getElementById("aiSaveMd").addEventListener("click", () => {
+  const ta = document.getElementById("aiOut");
+  if (!ta || !ta.value) { showToast("还没有可保存的内容"); return; }
+  const t = tasks.find((x) => x.id === aiTaskId);
+  const base = ((t && (t.baseName || t.file)) || "AI总结").toString().replace(/\.[^.]+$/, "").slice(0, 80);
+  const blob = new Blob([ta.value], { type: "text/markdown;charset=utf-8" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = base + "-AI总结.md"; a.click(); URL.revokeObjectURL(a.href);
+  showToast("已下载 " + base + "-AI总结.md");
+});
+document.getElementById("aiCancel").addEventListener("click", () => aiMask.classList.remove("show"));
+aiMask.addEventListener("click", (e) => { if (e.target === aiMask) aiMask.classList.remove("show"); });
 // ---------- v0.3 字幕跟读：解析 SRT/VTT → 播放器联动 ----------
 const cueCache = new Map(); // id -> [{start,end,text}]
 function parseCues(text) {
@@ -634,6 +855,7 @@ taskList.addEventListener('click', async (e) => {
   const del = e.target.closest('[data-del]');
   if (del) {
     const tid = del.dataset.del;
+    try { await fetch("/api/task/" + encodeURIComponent(tid), { method: "DELETE" }); } catch {} // 服务端清缓存媒体，失败不阻塞前端移除
     tasks = tasks.filter((x) => x.id !== tid);
     expanded.delete(tid);
     clearInterval(taskTimers.get(tid)); taskTimers.delete(tid);
@@ -672,6 +894,73 @@ taskList.addEventListener('click', async (e) => {
     } catch { showToast('❌ 重试失败（服务未运行？）'); rt.disabled = false; rt.textContent = '↻ 重试'; }
     return;
   }
+  // 字幕工具条：整体偏移（-0.5/+0.5 微调 / 输入秒数应用）
+  const offB = e.target.closest('[data-off]');
+  if (offB) {
+    const tid = offB.dataset.id;
+    const ta = document.querySelector(`textarea[data-tarea="${tid}"]`);
+    const cur = tasks.find((x) => x.id === tid);
+    if (ta && cur) {
+      const key = cur._tab || 'srt';
+      const old = getResult(cur, key) || ta.value;
+      const shifted = shiftTimeText(old, parseFloat(offB.dataset.off) || -0.5, key);
+      ta.value = shifted; setResult(cur, key, shifted);
+      cueCache.delete(tid); if (cur.result.srt) { const c = parseCues(cur.result.srt); if (c.length) cueCache.set(tid, c); }
+      showToast('字幕已' + (offB.dataset.off > 0 ? '延后' : '提前') + ' ' + Math.abs(offB.dataset.off) + 's');
+    }
+    return;
+  }
+  const offIn = e.target.closest('[data-offin]');
+  if (offIn) { return; } // 输入框自身点击不冒泡处理（避免误触）
+  const offAp = e.target.closest('[data-offapply]');
+  if (offAp) {
+    const tid = offAp.dataset.offapply;
+    const input = document.querySelector(`input[data-offin="${tid}"]`);
+    const ta = document.querySelector(`textarea[data-tarea="${tid}"]`);
+    const cur = tasks.find((x) => x.id === tid);
+    if (input && ta && cur) {
+      const sec = parseFloat(input.value);
+      if (!isFinite(sec) || sec === 0) { showToast('请输入非 0 的偏移秒数（正=延后）'); return; }
+      const key = cur._tab || 'srt';
+      ta.value = shiftTimeText(ta.value || getResult(cur, key), sec, key);
+      setResult(cur, key, ta.value);
+      cueCache.delete(tid); if (cur.result.srt) { const c = parseCues(cur.result.srt); if (c.length) cueCache.set(tid, c); }
+      input.value = '0';
+      showToast('字幕已整体偏移 ' + (sec > 0 ? '+' : '') + sec + 's');
+    }
+    return;
+  }
+  // 字幕统计
+  const stB = e.target.closest('[data-stats]');
+  if (stB) {
+    const tid = stB.dataset.stats;
+    const ta = document.querySelector(`textarea[data-tarea="${tid}"]`);
+    const cur = tasks.find((x) => x.id === tid);
+    if (ta && cur) {
+      const key = cur._tab || 'srt';
+      const info = subStats(ta.value || getResult(cur, key));
+      showToast(`共 ${info.cues} 段 · ${info.chars} 字 · 时长 ${info.dur}`);
+    }
+    return;
+  }
+  // 下载当前格式（Blob 直接下载修正后内容）
+  const dlB = e.target.closest('[data-dl]');
+  if (dlB) {
+    const tid = dlB.dataset.dl;
+    const ta = document.querySelector(`textarea[data-tarea="${tid}"]`);
+    const cur = tasks.find((x) => x.id === tid);
+    if (ta && cur) {
+      const key = cur._tab === 'srt' ? 'srt' : 'vtt';
+      const name = (cur.baseName || cur.file || '字幕').replace(/\.[^.]+$/, '') + '.' + key;
+      const blob = new Blob([ta.value], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
+      showToast('已下载 ' + name);
+    }
+    return;
+  }
+  // AI 总结（弹层）
+  const aiB = e.target.closest('[data-ai]');
+  if (aiB) { openAiPanel(aiB.dataset.ai); return; }
   // 字幕点击跳转（跟读 tab）
   const cue = e.target.closest('[data-cue]');
   if (cue) {
@@ -784,7 +1073,8 @@ function openSavePanel(id) {
   saveTaskId = id;
   document.getElementById('saveName').value = t.baseName || t.file.replace(/\.[^.]+$/, '') || '转写结果';
   const defFmt = (t._tab && t._tab !== 'read') ? t._tab : 'txt';
-  document.querySelectorAll('input[name=sfmt]').forEach((r) => { r.checked = r.value === defFmt; });
+  const hasSrt = (getResult(t, 'srt') || '').includes('-->'), hasVtt = (getResult(t, 'vtt') || '').includes('-->');
+  document.querySelectorAll('input[name=sfmt]').forEach((r) => { r.checked = r.value === defFmt; r.disabled = (r.value === 'srt' && !hasSrt) || (r.value === 'vtt' && !hasVtt); });
   updateSaveLocHint();
   document.getElementById('saveMask').classList.add('show');
 }
@@ -969,6 +1259,68 @@ initSavedDir();
 loadModels();
 loadServerTasks();
 setInterval(loadModels, 4000);
+
+// ---------- v0.7 设置：自动落盘目录 / B站 SESSDATA（持久化在服务端 settings.json） ----------
+const cfgBtn = document.getElementById('cfgBtn');
+const cfgMask = document.getElementById('cfgMask');
+let cfgHasSess = false;
+let cfgHasAi = false;
+cfgBtn.addEventListener('click', async () => {
+  try {
+    const r = await fetch('/api/settings');
+    const j = await r.json();
+    document.getElementById('cfgOutDir').value = j.outDir || '';
+    cfgHasSess = !!j.hasSessdata;
+    const sess = document.getElementById('cfgSess');
+    sess.value = '';
+    sess.placeholder = cfgHasSess ? '已配置（留空 = 保持不变）' : 'sessdata=xxxx…';
+    const aiE = document.getElementById("cfgAiEndpoint");
+    const aiK = document.getElementById("cfgAiKey");
+    const aiM = document.getElementById("cfgAiModel");
+    if (aiE && j) { aiE.value = j.aiEndpoint || ""; aiM.value = j.aiModel || ""; }
+    cfgHasAi = !!(j && j.hasAi);
+    if (aiK) { aiK.value = ""; aiK.placeholder = cfgHasAi ? "已配置（留空 = 保持不变）" : "sk-…（你的 Key，仅存本机 settings.json）"; }
+    document.getElementById('cfgOutHint').textContent = '默认：' + (j.defaultOutDir || '') + (j.envOutDir ? '（当前被环境变量覆盖：' + j.envOutDir + '）' : '');
+  } catch { showToast('? 拉取设置失败'); }
+  cfgMask.classList.add('show');
+});
+function closeCfg() { cfgMask.classList.remove('show'); }
+cfgMask.addEventListener('click', (e) => { if (e.target === cfgMask) closeCfg(); });
+document.getElementById('cfgCancel').addEventListener('click', closeCfg);
+document.getElementById('cfgReset').addEventListener('click', () => { document.getElementById('cfgOutDir').value = ''; });
+document.getElementById('cfgSave').addEventListener('click', async () => {
+  const outDir = document.getElementById('cfgOutDir').value.trim();
+  const sessInput = document.getElementById('cfgSess');
+  let sessdata;
+  if (sessInput.value.trim()) sessdata = sessInput.value.trim();
+  else if (!cfgHasSess) sessdata = ''; // 未配置过且留空 = 清除
+  const aiEIn = document.getElementById('cfgAiEndpoint').value.trim();
+  const aiKIn = document.getElementById('cfgAiKey').value.trim();
+  const aiMIn = document.getElementById('cfgAiModel').value.trim();
+  let aiKeySend;
+  if (aiKIn) aiKeySend = aiKIn;
+  else if (!aiEIn) aiKeySend = ''; // 端点也清空 = 整套清除
+  try {
+    const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outDir, sessdata, aiEndpoint: aiEIn, aiKey: aiKeySend, aiModel: aiMIn }) });
+    const j = await r.json();
+    if (!r.ok) { showToast('保存失败：' + (j.error || r.status)); return; }
+    cfgHasSess = !!j.hasSessdata;
+    cfgHasAi = !!j.hasAi;
+    showToast('设置已保存');
+    closeCfg();
+    if (window.refreshOutHint) refreshOutHint();
+  } catch { showToast('保存失败（服务未运行？）'); }
+});
+
+// 小贴士落盘路径动态化（有任务详情时顺带刷新）
+const tipOut = document.getElementById('tipOutDir');
+if (tipOut) {
+  window.refreshOutHint = async () => {
+    try { const r = await fetch('/api/config'); const j = await r.json(); if (j && j.outDir) tipOut.textContent = j.outDir; } catch {}
+  };
+  refreshOutHint();
+}
+
 // PWA：注册 Service Worker（仅支持时）
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/service-worker.js').catch(() => {});

@@ -1,5 +1,5 @@
 /* 拾音 Service Worker —— 只缓存界面静态资源（转写功能走本地服务，不受影响） */
-const CACHE = 'shiyin-v5'; // v4: 图标重设计（麦克风+声波），修 v3 缓存残留 // v3: 图标重设计（波形条） // v2: 图标换新版（透明背景）
+const CACHE = 'shiyin-v6'; // v6: v1.0.0 前端大改（链接蒸馏/AI 总结/热词）强制刷新 // v4: 图标重设计（麦克风+声波），修 v3 缓存残留 // v3: 图标重设计（波形条） // v2: 图标换新版（透明背景）
 
 self.addEventListener('install', (e) => {
   e.waitUntil(

@@ -1,8 +1,15 @@
 ﻿/**
- * 拾音 (Shiyin) — 纯本地音频/视频转文字工具
- * 基于 whisper.cpp，文件全程不出电脑。
- * v0.2：批量队列 + 模型管理（下载/切换）+ 反幻觉参数 + txt/srt/vtt 输出
- * v0.3：字幕↔音频联动（保留媒体供播放、字幕点击跳转）+ VAD 静音跳过
+ * 拾音 (Shiyin) — 本地音频/视频/链接 → 文字（whisper.cpp 引擎，文件不出电脑）
+ * 基于 whisper.cpp，纯本地离线：上传音视频或粘贴 B站/抖音/快手/YouTube 链接即可转文字。
+ * v1.0.0：开源版功能整合——在 v0.4.0（纯本地上传）基础上合入自用改装线全部能力：
+ * v0.5：链接识别（yt-dlp）+ 结果自动落盘 OUT_DIR
+ * v0.6：B站链接改走官方 API 直连（yt-dlp 被 B站 412 风控全废）；有官方/AI 字幕则直接取字幕秒出，无字幕下 dash 音频转写
+ * v0.7：输出位置可配置（设置面板可改任意目录，重启保留）；可选填 B站 SESSDATA 解锁官方 AI 字幕；settings.json 持久化
+ * v0.9：多平台下载（抖音=浏览器代下载 / 快手=H5 直取）+ 平台适配器注册表 + JSONL 台账 + meta 增补平台/片长/大小
+ * v0.9.1：字幕与功能区块加强——字幕工具（时间偏移/统计/单格式下载，纯前端）、AI 总结（OpenAI 兼容端点自配，默认关）、任务平台/片长信息回显、批量多链接、任务删除 API、settings 增 AI 配置
+ * v0.9.3：四件套落盘改为「同名子文件夹」（txt/srt/vtt/meta 归入同名目录，收件箱不撒文件）
+ * v0.9.4：热词机制——whisper.cpp --prompt 通道注入热词，API/settings.json 可配；实测只注入 ASCII 词
+ * v0.9.5：文本整理——重复括号标签折叠（[笑声][笑声]→[笑声]）+ CJK 相邻空格删除（借鉴 VibeVoice asr_streaming tidy_body 思路）
  */
 const express = require('express');
 const multer = require('multer');
@@ -12,6 +19,15 @@ const https = require('https');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { sify } = require('chinese-conv');
+// v0.9：多平台下载适配器（抖音/快手等，插件式注册表见 platforms.js）；require 失败不阻塞服务（仅平台不可用）
+let detectAdapter = null;
+let platformsReady = false;
+try {
+  ({ detectAdapter } = require('./platforms'));
+  platformsReady = true;
+} catch (e) {
+  console.log('⚠️ 多平台适配器未就绪（' + e.message.slice(0, 120) + '），抖音/快手链接暂不可用');
+}
 
 const ROOT = __dirname;
 
@@ -23,8 +39,65 @@ const RUNTIME = path.join(VOL_ROOT, 'shiyin-cache');
 const MODEL_DIR = path.join(RUNTIME, 'models');
 const WORK = path.join(RUNTIME, 'work');
 const MEDIA_DIR = path.join(WORK, 'media'); // 转写完成后保留的原始媒体（供前端播放/字幕跳转）
+// 设置持久化（输出目录 / B站 SESSDATA），存 RUNTIME 下 settings.json
+const SETTINGS_FILE = path.join(RUNTIME, 'settings.json');
+let settings = {};
+try { settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch {}
+function saveSettings() { try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8'); } catch {} }
+// v0.9：数据台账（JSONL，每次任务成功/失败各记一行，失败可看台账重试）
+const LEDGER_FILE = path.join(RUNTIME, 'ledger.jsonl');
+function appendLedger(task) {
+  try {
+    const entry = {
+      ts: new Date().toISOString(),
+      kind: task.sourceUrl ? 'link' : 'upload',
+      url: task.sourceUrl || null,
+      platform: task.platform || null,
+      status: task.status,
+      title: task.fileName && task.fileName.length < 300 ? task.fileName : (task.fileName || '').slice(0, 300),
+      sizeMB: task.sizeMB || null,
+      durationSec: task.durationSec || null,
+      elapsedSec: task.elapsedSec || null,
+      outDir: task.outDir || null,
+      outFiles: task.outFiles || null,
+      error: task.error || null,
+    };
+    fs.appendFileSync(LEDGER_FILE, JSON.stringify(entry) + '\n', 'utf8');
+  } catch {}
+}
+// 落盘目录：优先级 = 设置面板(settings.json) > 环境变量 SHIYIN_OUT_DIR > 默认（用户桌面/拾音收件箱）
+const DEFAULT_OUT_DIR = path.join(require('os').homedir(), 'Desktop', '拾音收件箱');
+function getOutDir() { return (settings.outDir && settings.outDir.trim()) || process.env.SHIYIN_OUT_DIR || DEFAULT_OUT_DIR; }
+function ensureOutDir() { try { fs.mkdirSync(getOutDir(), { recursive: true }); } catch {} }
+ensureOutDir();
+
+// ---------- 热词（v0.9.4）：whisper.cpp --prompt 通道 ----------
+// 实测结论（2026-09-09 A/B，hw_ab.wav + turbo q5_0）：
+//   - 英文/ASCII 热词进 --prompt 有效：Crawl4AI 无 prompt 误转为「CrossAI」，带 prompt 修正为「Crawl4AI」
+//   - 中文 prompt 经 Windows ANSI argv 会乱码（实验 B：prompt 乱码导致输出标点全丢），故只注入 ASCII 词；
+//     中文专名 whisper 原生识别已准，无需 prompt 兑底
+//     开源版默认表留空（靠设置面板/API 按需配），避免生态词预设干扰通用场景
+const DEFAULT_HOTWORDS = '';
+function getHotwordsSource(task) {
+  if (task && typeof task.hotwords === 'string' && task.hotwords.trim()) return task.hotwords;
+  if (typeof settings.hotwords === 'string' && settings.hotwords.trim()) return settings.hotwords;
+  return DEFAULT_HOTWORDS;
+}
+function buildHotwordPrompt(task) {
+  const src = getHotwordsSource(task);
+  const words = [...new Set(src.split(/[,，、;；]/).map((s) => s.trim()).filter(Boolean))];
+  const ascii = words.filter((w) => /^[\x20-\x7E]+$/.test(w));
+  const skipped = words.filter((w) => !/^[\x20-\x7E]+$/.test(w));
+  if (!ascii.length) return null;
+  return { prompt: `The following proper nouns appear: ${ascii.join(', ')}.`, used: ascii, skipped, src };
+}
 const VAD_MODEL = 'ggml-silero-v6.2.0.bin'; // Silero VAD（跳过静音段）
 const WHISPER = path.join(ROOT, 'bin', 'Release', 'whisper-cli.exe');
+// 链接下载器 yt-dlp：pip 安装到 bin/yt-dlp-pkg（独立包，不污染系统 Python），用 python -m yt_dlp 调用
+const PYTHON = process.env.PYTHON || 'python';
+const YTDLP_PKG = path.join(ROOT, 'bin', 'yt-dlp-pkg');
+const YTDLP_MAIN = path.join(YTDLP_PKG, 'yt_dlp', '__main__.py'); // 直接执行入口（embedded Python 忽略 PYTHONPATH，靠 __main__.py 自己插 sys.path）
+const FILE_YTDLP = path.join(ROOT, 'bin', 'yt-dlp.exe'); // 兼容：若用户后来放了 standalone exe 则优先用它
 const FFMPEG = process.env.FFMPEG || 'ffmpeg';
 const FFPROBE = process.env.FFPROBE || 'ffprobe';
 const PORT = parseInt(process.env.PORT || '18900', 10);
@@ -95,6 +168,327 @@ function run(cmd, args) {
   });
 }
 
+// 运行 yt-dlp：优先 standalone exe，否则 python -m yt_dlp（带 PYTHONPATH 指向本地包）
+function runYtDlp(args) {
+  if (fs.existsSync(FILE_YTDLP)) return run(FILE_YTDLP, args);
+  return run(PYTHON, [YTDLP_MAIN, ...args]);
+}
+
+// ---------- YouTube 字幕优先（v0.8）：借鉴 BiliNote youtube_subtitle.py —— 不下载视频，字幕直取 ----------
+// YouTube 自动字幕覆盖绝大多数视频：先 yt-dlp --skip-download 直取字幕（秒出零算力），
+// 无字幕/网络不可达再降级整段下载转写（downloadUrl 原链路）。⚠️ 仅限网络本身可达 YouTube 时生效，不为翻墙开代理
+function isYtUrl(url) {
+  return /(^|\.)youtube\.com\/(watch\?|shorts\/|embed\/|live\/)|youtu\.be\//i.test(url || '');
+}
+
+// 字幕轨道语言偏好：zh > en > ja > 其他（文件名含语言代码，yt-dlp 格式 {id}.{lang}.{ext}）
+function subLangScore(fn) {
+  const s = fn.toLowerCase();
+  if (/zh([-._]|\b)|中文/.test(s)) return 30;
+  if (/en([-._]|\b)/.test(s)) return 20;
+  if (/ja([-._]|\b)/.test(s)) return 10;
+  return 0;
+}
+
+// YouTube 字幕文件（vtt/srt/json3）→ 段数组（{from,to,content}）→ 复用 biliSubsToFiles 统一出口
+function parseSubFile(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const arr = [];
+  const clean = (s) => String(s).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  if (/\.vtt$/i.test(filePath)) {
+    // WEBVTT cue："00:01.000 --> 00:04.000\n文本"（可能带小时段）
+    const re = /(\d{1,2}:\d{2}(?::\d{2})?\.\d{3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?\.\d{3})[^\n]*\n([\s\S]*?)(?=\n\s*\n|$)/g;
+    const toSec = (t) => { const p = t.split(':'); return (p.length === 3 ? +p[0] * 3600 : 0) + +p[p.length - 2] * 60 + +parseFloat(p[p.length - 1]); };
+    let m;
+    while ((m = re.exec(raw))) {
+      const content = clean(m[3]);
+      if (content) arr.push({ from: toSec(m[1]), to: toSec(m[2]), content });
+    }
+  } else if (/\.srt$/i.test(filePath)) {
+    const re = /(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})[^\n]*\n([\s\S]*?)(?=\n\s*\n|$)/g;
+    const toSec = (t) => { const p = t.split(':'); return +p[0] * 3600 + +p[1] * 60 + +parseFloat(p[2].replace(',', '.')); };
+    let m;
+    while ((m = re.exec(raw))) {
+      const content = clean(m[3]);
+      if (content) arr.push({ from: toSec(m[1]), to: toSec(m[2]), content });
+    }
+  } else if (/\.json3?$/i.test(filePath)) {
+    try {
+      const j = JSON.parse(raw);
+      for (const e of (j.events || [])) {
+        if (!e.segs || !e.segs.length) continue;
+        const content = clean(e.segs.map((s) => s.utf8 || '').join(''));
+        if (content) arr.push({ from: (e.tStartMs || 0) / 1000, to: ((e.tStartMs || 0) + (e.dDurationMs || 0)) / 1000, content });
+      }
+    } catch { /* json3 解析失败视为无字幕 */ }
+  }
+  return arr;
+}
+
+// YouTube 字幕优先：成功 {done:true} 并落盘；失败抛错由 executeTask 降级整段下载转写
+async function ytSubtitleProcess(task) {
+  const dir = path.join(WORK, 'uploads', task.id);
+  fs.mkdirSync(dir, { recursive: true });
+  const outTpl = path.join(dir, 'sub.%(id)s.%(ext)s');
+  const args = ['--no-playlist', '--skip-download', '--write-subs', '--write-auto-subs',
+    '--socket-timeout', '10', '--retries', '2', // 字幕探测快速失败（网络不可达 ~30s 内降级，不拖慢整体）
+    '--sub-langs', 'zh.*,zh-Hans,zh-CN,zh-TW,zh,en.*,en-US,en,ja,ja.*',
+    '--sub-format', 'vtt/srt/best', '-o', outTpl, '--print', '%(title)s', task.sourceUrl];
+  let title = '';
+  try {
+    title = (await runYtDlp(args)).split(/\r?\n/).map((s) => s.trim()).find(Boolean) || '';
+  } catch (e) {
+    throw new Error('YouTube 字幕获取失败：' + e.message.slice(-200));
+  }
+  const files = fs.readdirSync(dir).filter((f) => /\.(vtt|srt|json3?)$/i.test(f));
+  if (!files.length) throw new Error('YouTube 无可用字幕轨道（降级下载转写）');
+  const pick = files.sort((a, b) => subLangScore(b) - subLangScore(a))[0];
+  const arr = parseSubFile(path.join(dir, pick));
+  if (!arr.length) throw new Error('YouTube 字幕内容为空（降级下载转写）');
+  const out = biliSubsToFiles(arr);
+  if (!out.txt.trim()) throw new Error('YouTube 字幕文本为空（降级下载转写）');
+  task.fileName = title || 'YouTube 视频';
+  task.baseName = safeBaseName(task.fileName);
+  task.status = 'done';
+  task.result = { text: out.txt, srt: out.srt, vtt: out.vtt, file: task.fileName, noSpeech: false, model: 'YouTube字幕', vad: false };
+  task.elapsedSec = Math.round((Date.now() - (task.startAt || Date.now())) / 1000);
+  persistToOutbox(task, out.txt, out.srt, out.vtt);
+  return { done: true };
+}
+
+// ---------- 链接下载（yt-dlp）：B站/YouTube/直链 → 最佳音轨转 mp3（whisper 只要音频，省时省空间） ----------
+async function downloadUrl(url, id) {
+  const dir = path.join(WORK, 'uploads', id);
+  fs.mkdirSync(dir, { recursive: true });
+  const outTpl = path.join(dir, 'dl.%(ext)s');
+  let title = '';
+  try { title = (await runYtDlp(['--get-title', '--no-playlist', url])).trim(); } catch { /* 拿不到标题不影响下载 */ }
+  await runYtDlp(['-f', 'bestaudio/best', '-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', outTpl, '--no-playlist', url]);
+  const files = fs.readdirSync(dir).filter((f) => /\.(mp3|m4a|webm|opus|wav|flac|aac|ogg)$/i.test(f));
+  if (!files.length) throw new Error('下载完成但未找到音频文件（可能需登录/反爬拦截）');
+  return { dlPath: path.join(dir, files[0]), title };
+}
+
+// ---------- B站官方 API 链路（v0.6）：yt-dlp 对 B站已被 412 风控（2026-09-03 实测全废），B站链接改走官方 API 直连 ----------
+// 实测：Node https 匿名 + UA/Referer 可正常访问 view/player/playurl 与音频 CDN；风控若再收紧可改用 curl.exe（schannel TLS 指纹更接近浏览器）
+// 实测（2026-09-03）：完整浏览器 UA（含 AppleWebKit/KHTML 段）反而触发 B站 412 风控（缺其他浏览器特征头，特征不匹配）；
+// 简化 UA（无 AppleWebKit 段）稳定 200 —— 反直觉但实测复现 5/5 vs 5/5，以实测为准
+const BILI_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0';
+
+// B站 buvid cookie 缓存（SPI 惰性获取，30 分钟有效）——B站风控对无 cookie 请求概率性 412，带上显著降概率
+let biliCk = '';
+let biliCkAt = 0;
+async function biliGetCookie(force) {
+  if (!force && biliCk && Date.now() - biliCkAt < 30 * 60 * 1000) return biliCk;
+  try {
+    const r = await biliRaw('https://api.bilibili.com/x/frontend/finger/spi', 3, null);
+    const j = JSON.parse(r.body);
+    if (r.status === 200 && j.data && j.data.b_3) {
+      biliCk = 'buvid3=' + j.data.b_3 + (j.data.b_4 ? '; buvid4=' + j.data.b_4 : '');
+      biliCkAt = Date.now();
+    }
+  } catch {}
+  return biliCk;
+}
+
+// 裸 GET（不自动带 cookie，供 SPI 用）
+function biliRaw(url, maxRedirect, cookie) {
+  return new Promise((resolve, reject) => {
+    const headers = { 'User-Agent': BILI_UA, 'Referer': 'https://www.bilibili.com/' };
+    if (cookie) headers.Cookie = cookie;
+    const req = https.get(url, { headers }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && maxRedirect > 0) {
+        res.resume();
+        const loc = res.headers.location;
+        return resolve(biliRaw(loc.startsWith('//') ? 'https:' + loc : (/^https?:/i.test(loc) ? loc : new URL(loc, url).href), maxRedirect - 1, cookie));
+      }
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => (data += c));
+      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.setTimeout(20000, () => req.destroy(new Error('B站请求超时')));
+    req.on('error', (e) => reject(new Error('B站请求失败：' + e.message)));
+  });
+}
+
+// B站 API/网页 GET：自动带 buvid cookie；412 风控时刷新 cookie + 退避重试（最多 3 轮）
+// 可选 SESSDATA（设置面板）：B站 AI 字幕需登录态才可见，填了可解锁官方字幕秒出
+async function biliApi(url, maxRedirect = 3) {
+  const ck = await biliGetCookie(false);
+  const sess = settings.biliSessdata ? 'SESSDATA=' + settings.biliSessdata.trim() + '; ' : '';
+  let r = await biliRaw(url, maxRedirect, sess + ck);
+  for (let i = 0; i < 3 && r.status === 412; i++) {
+    await new Promise((res) => setTimeout(res, 1500 + Math.random() * 2000));
+    const fresh = sess + (await biliGetCookie(true));
+    r = await biliRaw(url, maxRedirect, fresh);
+  }
+  return r;
+}
+
+// B站 JSON 接口：code!==0 抛错
+async function biliJson(url) {
+  const r = await biliApi(url);
+  if (r.status !== 200) throw new Error('B站接口 HTTP ' + r.status + '：' + String(r.body).slice(0, 160).replace(/\s+/g, ' ') + ' ← ' + url);
+  const j = JSON.parse(r.body);
+  if (j.code !== 0) throw new Error('B站接口错误 code=' + j.code + (j.message ? '（' + j.message + '）' : ''));
+  return j.data;
+}
+
+// 短链解析：b23.tv → 跟随重定向拿最终 URL
+function biliRedirect(url) {
+  return new Promise((resolve, reject) => {
+    const hop = (u, n) => {
+      const req = https.get(u, { headers: { 'User-Agent': BILI_UA } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && n > 0) {
+          res.resume();
+          const loc = res.headers.location;
+          return hop(loc.startsWith('//') ? 'https:' + loc : (/^https?:/i.test(loc) ? loc : new URL(loc, u).href), n - 1);
+        }
+        res.resume();
+        resolve({ status: res.statusCode, url: u });
+      });
+      req.setTimeout(15000, () => req.destroy(new Error('短链解析超时')));
+      req.on('error', (e) => reject(new Error('短链解析失败：' + e.message)));
+    };
+    hop(url, 5);
+  });
+}
+
+function isBiliUrl(url) { return /bilibili\.com|b23\.tv/i.test(url); }
+
+// 解析 B站链接 → { bvid|aid, page, qs }；b23.tv 先解短链；支持 ?p=N 分P
+async function resolveBiliId(url) {
+  let u = String(url);
+  if (/b23\.tv/i.test(u)) u = (await biliRedirect(u)).url;
+  const bv = u.match(/BV[0-9A-Za-z]{10}/);
+  const av = u.match(/av(\d+)/i);
+  if (!bv && !av) throw new Error('无法识别的 B站链接（仅支持 bilibili.com/video/BVxxx、av 号、b23.tv 短链）');
+  const page = Math.max(1, parseInt((u.match(/[?&]p=(\d+)/i) || [])[1] || '1', 10));
+  const q = bv ? 'bvid=' + bv[0] : 'aid=' + av[1];
+  return { bvid: bv ? bv[0] : null, aid: av ? av[1] : null, page, qs: q };
+}
+
+// 字幕挑选：中文字幕优先，人工字幕（ai_type=0）优先于 AI 字幕
+function pickBiliSubtitle(subs) {
+  if (!Array.isArray(subs) || !subs.length) return null;
+  const score = (s) => {
+    const lan = String(s.lan || '');
+    const doc = String(s.lan_doc || '');
+    let sc = 0;
+    if (/^zh/i.test(lan) || /中文|简体|繁体/.test(doc)) sc += 10;
+    if (String(s.ai_type) === '0') sc += 5;
+    return sc;
+  };
+  return subs.filter((s) => s.subtitle_url).sort((a, b) => score(b) - score(a))[0] || null;
+}
+
+// B站字幕 json（body[]: {from,to,content}）→ txt/srt/vtt 三件套（剥标签 + 繁转简）
+function biliSubsToFiles(arr) {
+  const pad = (n, l) => String(n).padStart(l || 2, '0');
+  const fmtSrt = (t) => {
+    const d = new Date(Math.round(t * 1000));
+    return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + ',' + pad(d.getUTCMilliseconds(), 3);
+  };
+  const fmtVtt = (t) => fmtSrt(t).replace(',', '.');
+  const txt = [], srt = [], vtt = [];
+  for (const it of arr) {
+    const text = sify(String(it.content || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim());
+    if (!text) continue;
+    txt.push(text);
+    const from = Number(it.from) || 0;
+    const to = Number(it.to) || from;
+    srt.push((srt.length + 1) + '\n' + fmtSrt(from) + ' --> ' + fmtSrt(to) + '\n' + text);
+    vtt.push(fmtVtt(from) + ' --> ' + fmtVtt(to) + '\n' + text);
+  }
+  return { txt: txt.join('\n'), srt: srt.join('\n\n'), vtt: 'WEBVTT\n\n' + vtt.join('\n\n') };
+}
+
+// 通用下载（B站 CDN 需 UA/Referer）：流式 + 进度回调
+function biliDownload(url, dest, onProgress) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { 'User-Agent': BILI_UA, 'Referer': 'https://www.bilibili.com/' } }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
+      const total = parseInt(res.headers['content-length'] || '0', 10) || 0;
+      let done = 0;
+      const out = fs.createWriteStream(dest);
+      res.on('data', (c) => { done += c.length; if (onProgress && total) onProgress(done, total); });
+      res.pipe(out);
+      out.on('finish', () => { if (onProgress && total) onProgress(total, total); resolve(); });
+      out.on('error', reject);
+      res.on('error', reject);
+    });
+    req.setTimeout(30000, () => req.destroy(new Error('下载超时')));
+    req.on('error', (e) => reject(new Error('下载失败：' + e.message)));
+  });
+}
+
+// B站链接统一处理：返回 { done:true }（字幕秒出已落盘）或 { done:false, dlPath, title }（音频供 whisper）
+async function biliProcess(task) {
+  const { bvid, aid, page, qs } = await resolveBiliId(task.sourceUrl);
+  const view = await biliJson('https://api.bilibili.com/x/web-interface/view?' + qs);
+  const pages = view.pages || [];
+  const pg = pages[Math.min(page - 1, pages.length - 1)] || {};
+  const cid = pg.cid;
+  if (!cid) throw new Error('B站：未取到视频 cid（可能为付费/会员内容）');
+  const title = String(view.title || '').trim() || 'B站视频';
+  const vq = bvid ? 'bvid=' + bvid : 'aid=' + aid;
+  task.progress = 6;
+
+  // 1) 字幕优先：有官方/AI 字幕直接秒出，跳过 whisper
+  try {
+    const pid = await biliJson('https://api.bilibili.com/x/player/wbi/v2?' + vq + '&cid=' + cid);
+    const subs = (pid.subtitle && pid.subtitle.subtitles) || [];
+    const picked = pickBiliSubtitle(subs);
+    if (picked) {
+      const su = String(picked.subtitle_url);
+      const r = await biliApi(su.startsWith('//') ? 'https:' + su : su);
+      if (r.status === 200) {
+        const arr = JSON.parse(r.body).body;
+        if (Array.isArray(arr) && arr.length) {
+          const files = biliSubsToFiles(arr);
+          if (files.txt.trim()) {
+            // 源标注：中文字幕 → 「官方字幕」；非中文（英/日等）→ 附语言名，避免误当中文内容
+            const lan = String((picked && picked.lan) || '');
+            const lanDoc = String((picked && picked.lan_doc) || '').replace(/\([^)]*\)/g, '');
+            const srcTag = /^zh/i.test(lan) || /中文|简体|繁体/.test(lanDoc) ? '官方字幕' : '官方字幕（' + (lanDoc || lan || '非中文') + '）';
+            task.fileName = title;
+            task.baseName = safeBaseName(title);
+            task.status = 'done';
+            task.result = { text: files.txt, srt: files.srt, vtt: files.vtt, file: title, noSpeech: false, model: srcTag, vad: false };
+            task.elapsedSec = Math.round((Date.now() - (task.startAt || Date.now())) / 1000);
+            persistToOutbox(task, files.txt, files.srt, files.vtt);
+            return { done: true };
+          }
+        }
+      }
+    }
+  } catch { /* 字幕探测/解析失败不阻塞，降级走音频转写 */ }
+
+  // 2) 无字幕 → dash 音频下载（音质从高到低逐个尝试，会员音质 403 自动跳过）
+  task.progress = 8;
+  const pl = await biliJson('https://api.bilibili.com/x/player/playurl?' + vq + '&cid=' + cid + '&fnval=16');
+  const auds = ((pl.dash && pl.dash.audio) || []).slice().sort((a, b) => b.id - a.id);
+  if (!auds.length) throw new Error('B站：未取到可用音频流（该视频可能需要登录/大会员）');
+  const dir = path.join(WORK, 'uploads', task.id);
+  fs.mkdirSync(dir, { recursive: true });
+  let lastErr = null;
+  for (const a of auds) {
+    const u = a.baseUrl || a.base_url;
+    if (!u) continue;
+    try {
+      const m4s = path.join(dir, 'dl.m4s');
+      await biliDownload(u, m4s, (done, total) => { task.progress = Math.max(task.progress || 0, 8 + Math.round((done / total) * 52)); });
+      // dash 音频是裸 fMP4（m4s），播放器兼容性差 → 顺手转 mp3（给 whisper 抽音与前端播放共用）
+      const mp3 = path.join(dir, 'dl.mp3');
+      await run(FFMPEG, ['-y', '-v', 'error', '-i', m4s, '-vn', '-c:a', 'libmp3lame', '-q:a', '4', mp3]);
+      fs.promises.unlink(m4s).catch(() => {});
+      return { done: false, dlPath: mp3, title };
+    } catch (e) { lastErr = e; }
+  }
+  throw new Error('B站：音频下载失败' + (lastErr ? '：' + lastErr.message : ''));
+}
+
 function runWhisper(inputWav, task, outPrefix) {
   return new Promise((resolve, reject) => {
     const model = path.join(MODEL_DIR, activeModel);
@@ -107,6 +501,16 @@ function runWhisper(inputWav, task, outPrefix) {
       '-otxt', '-osrt', '-ovtt', '-of', base,
       '-t', '8', '-nth', '0.60', '-tpi', '0.0',
     ];
+    // v0.9.4：热词 prompt（仅 ASCII 词，中文词自动跳过，原因见 buildHotwordPrompt 注释）
+    const hw = buildHotwordPrompt(task);
+    if (hw) {
+      args.push('--prompt', hw.prompt);
+      task.hotwordsUsed = hw.used;
+      task.hotwordsSkipped = hw.skipped;
+    } else {
+      task.hotwordsUsed = [];
+      task.hotwordsSkipped = [];
+    }
     // v0.3：VAD 静音跳过（长音频/播客显著加速 + 减少环境声幻觉）；需 ggml-silero-v6.2.0.bin 已下载
     if (task.useVad) {
       const vadPath = path.join(MODEL_DIR, VAD_MODEL);
@@ -131,11 +535,66 @@ function runWhisper(inputWav, task, outPrefix) {
 }
 
 async function executeTask(task) {
-  const uploadPath = task.uploadPath;
+  let uploadPath = task.uploadPath;
   let wavPath = path.join(WORK, task.id + '.wav');
   const base = path.join(WORK, task.id);
   try {
-    // 0. 已是 whisper 输入格式（16kHz 单声道 WAV）？直接跳过转码（音频上传最省时的场景）
+    // 0. 链接任务：先下载到工作区，再走统一转写流程
+    //    B站 → 官方 API 直连（yt-dlp 已被 B站 412 风控）：有字幕直接秒出（done），无字幕下音频转写
+    //    非 B站（YouTube/直链等）→ yt-dlp（原链路）
+    if (task.sourceUrl && !task.uploadPath) {
+      task.status = 'downloading';
+      const adapter = detectAdapter && detectAdapter(task.sourceUrl); // v0.9 插件平台（抖音/快手）
+      if (isBiliUrl(task.sourceUrl)) {
+        task.platform = 'bilibili';
+        const r = await biliProcess(task);
+        if (r.done) return; // 字幕模式已产出结果并落盘，提前结束（finally 兜底清理）
+        task.uploadPath = r.dlPath;
+        uploadPath = r.dlPath;
+        if (r.title) { task.fileName = r.title + path.extname(r.dlPath); task.baseName = safeBaseName(r.title); }
+      } else if (isYtUrl(task.sourceUrl)) {
+        task.platform = 'youtube';
+        // YouTube：字幕优先（v0.8）——有自动/人工字幕直接秒出；无字幕或网络不可达降级整段下载转写
+        try {
+          const yr = await ytSubtitleProcess(task);
+          if (yr.done) return; // 字幕模式已产出并落盘（finally 兜底清理）
+        } catch (e) {
+          console.log(`YouTube 字幕降级下载转写：${String(e.message).slice(0, 140)}`);
+        }
+        const { dlPath, title } = await downloadUrl(task.sourceUrl, task.id);
+        task.uploadPath = dlPath;
+        uploadPath = dlPath;
+        if (title) { task.fileName = title + path.extname(dlPath); task.baseName = safeBaseName(title); }
+      } else if (adapter) {
+        // 插件平台：适配器负责把视频落到工作目录，其余复用统一转写流水线（platform 提前标记：下载失败也进台账带平台）
+        task.platform = adapter.id;
+        const r = await adapter.download(task, path.join(WORK, 'uploads', task.id));
+        task.platform = adapter.id;
+        task.uploadPath = r.dlPath;
+        uploadPath = r.dlPath;
+        if (r.title) { task.fileName = r.title + path.extname(r.dlPath); task.baseName = safeBaseName(r.title); }
+        if (r.sizeMB) task.sizeMB = r.sizeMB;
+      } else {
+        task.platform = 'direct';
+        const { dlPath, title } = await downloadUrl(task.sourceUrl, task.id);
+        task.uploadPath = dlPath;
+        uploadPath = dlPath;
+        if (title) { task.fileName = title + path.extname(dlPath); task.baseName = safeBaseName(title); }
+      }
+      // 链接任务统一补元信息：大小 + 片长（ffprobe），供 meta.json / 台账
+      try {
+        const st = fs.statSync(uploadPath);
+        if (st && st.size > 0) task.sizeMB = Math.round((st.size / 1048576) * 10) / 10;
+      } catch {}
+      if (!task.durationSec) {
+        try {
+          const probe = await run(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', uploadPath]);
+          const d = parseFloat(String(probe).trim());
+          if (d > 0) task.durationSec = Math.round(d);
+        } catch { /* 探测失败不阻塞 */ }
+      }
+    }
+    // 1. 已是 whisper 输入格式（16kHz 单声道 WAV）？直接跳过转码（音频上传最省时的场景）
     //    ffprobe 秒级探测；仅 .wav 值得探测（mp3/flac/视频一律走 ffmpeg）
     let skipConvert = false;
     if (path.extname(task.fileName).toLowerCase() === '.wav') {
@@ -165,6 +624,15 @@ async function executeTask(task) {
     let vtt = read('.vtt');
     // 3.5 重复幻觉后处理：whisper 在长音频/模糊音频上偶尔会把一句话重复输出多次（"说一遍变十遍"），
     //     这里合并时间上相邻、文本完全相同的段落（txt 按行去重；srt/vtt 解析 cue 去重后重新编号）
+    // v0.9.5 文本整理（借鉴 microsoft/VibeVoice vllm_plugin/asr_streaming.py tidy_body 思路）：
+    //   - 重复括号标签折叠：[笑声][笑声] → [笑声]（backreference 只折相同标签，[笑声][音乐] 不折）
+    //   - CJK 相邻空格删除：「你 好」→「你好」（whisper 偶发在中文内插空格，英文不误伤）
+    //   - 行内多空白收敛为单空格
+    const CJK_RANGE = '\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u3000-\u303f\uff00-\uffef';
+    const tidyText = (text) => String(text)
+      .replace(/(\[[^\[\]]*\])(?:\s*\1)+/g, '$1')
+      .replace(new RegExp(`(?<=[${CJK_RANGE}]) (?=[${CJK_RANGE}])`, 'g'), '')
+      .split(/\r?\n/).map((l) => l.replace(/[ \t]+/g, ' ').trim()).join('\n');
     const norm = (s) => String(s).replace(/[\s，。！？、,.!?;；：:…"'“”‘’()（）\[\]【】-]/g, '').toLowerCase();
     // 「A - A - A - A」或「A A A」整段同一词重复（whisper 对无语音段/模糊音频的典型幻觉）→ 收缩为单个
     const shrinkRepeatWords = (text) => {
@@ -201,10 +669,11 @@ async function executeTask(task) {
         const out = [];
         let removed = 0;
         let shrunk = false;
+        let tidied = false;
         for (const c of cues) {
-          // 先收缩 cue 内重复词，再判相邻重复
-          const text = shrinkRepeatWords(c.text);
-          if (text !== c.text) shrunk = true;
+          // 先收缩 cue 内重复词 + 文本整理，再判相邻重复
+          const text = tidyText(shrinkRepeatWords(c.text));
+          if (text !== c.text) { if (text.length < c.text.length) shrunk = true; else tidied = true; }
           const prev = out[out.length - 1];
           if (prev && norm(prev.text) !== '' && norm(prev.text) === norm(text)) {
             // 合并：保留前一条的起点 + 当前条的终点（时间轴连续），文本不变
@@ -234,18 +703,18 @@ async function executeTask(task) {
     if (srt) {
       const r = dedupe.dedupeCues(dedupe.parseCues(srt, true), true);
       // 有相邻去重或 cue 内收缩都重新序列化
-      srt = r.removed || r.shrunk ? dedupe.serialize(r.out, true, false) : srt;
+      srt = r.removed || r.shrunk || r.tidied ? dedupe.serialize(r.out, true, false) : srt;
     }
     if (vtt) {
       const r = dedupe.dedupeCues(dedupe.parseCues(vtt, false), false);
-      vtt = r.removed || r.shrunk ? dedupe.serialize(r.out, false, true) : vtt;
+      vtt = r.removed || r.shrunk || r.tidied ? dedupe.serialize(r.out, false, true) : vtt;
     }
     if (txt) {
       const tl = txt.split(/\r?\n/);
       const out = [];
       let changed = false;
       for (const l of tl) {
-        const line = shrinkRepeatWords(l); // 收缩行内重复词幻觉（如「屁股 - 屁股 - 屁股」）
+        const line = tidyText(shrinkRepeatWords(l)); // 收缩行内重复词幻觉（如「屁股 - 屁股 - 屁股」）+ 文本整理
         if (line !== l) changed = true;
         const prev = out[out.length - 1];
         if (prev && norm(prev) !== '' && norm(prev) === norm(line)) { changed = true; continue; }
@@ -284,16 +753,22 @@ async function executeTask(task) {
     task.status = 'done';
     task.result = { text: txt, srt, vtt, file: task.fileName, noSpeech, model: activeModel, vad: !!task.useVad };
     task.elapsedSec = Math.round((Date.now() - (task.startAt || Date.now())) / 1000);
+    // 5. 落盘：转写成品自动落到收件箱（可配置目录）
+    persistToOutbox(task, txt, srt, vtt);
   } catch (e) {
     task.status = 'failed';
     task.error = e.message;
   } finally {
     // 媒体目录内的文件（重试场景的输入）永不删除；失败时清理 upload（仅限非媒体目录临时文件）
     const inMedia = (p) => String(p).startsWith(MEDIA_DIR);
-    if (task.status !== 'done' && !inMedia(task.uploadPath)) fs.promises.unlink(task.uploadPath).catch(() => {});
+    if (task.status !== 'done' && task.uploadPath && !inMedia(task.uploadPath)) fs.promises.unlink(task.uploadPath).catch(() => {});
     for (const f of [wavPath, base + '.txt', base + '.srt', base + '.vtt']) {
       if (!inMedia(f)) fs.promises.unlink(f).catch(() => {});
     }
+    // 链接任务：清理下载工作目录（成功时媒体已迁走，失败时清残留）
+    if (task.sourceUrl) fs.promises.rm(path.join(WORK, 'uploads', task.id), { recursive: true, force: true }).catch(() => {});
+    // v0.9：台账记录（无论成败，字幕秒出模式同样记）
+    appendLedger(task);
   }
 }
 
@@ -318,6 +793,9 @@ function publicTask(t, full) {
     error: t.error, result: null, file: t.fileName, baseName: t.baseName,
     sizeMB: t.sizeMB, model: t.model, createdAt: t.createdAt, elapsedSec: t.elapsedSec,
     mediaUrl: t.mediaUrl, mediaType: t.mediaType, useVad: !!t.useVad,
+    platform: t.platform || null, durationSec: t.durationSec || null, sourceUrl: t.sourceUrl || null,
+    outDir: t.outDir, outFiles: t.outFiles, outError: t.outError,
+    hotwords: t.hotwords || null, hotwordsUsed: t.hotwordsUsed || null, hotwordsSkipped: t.hotwordsSkipped || null,
   };
   if (t.result) {
     const r = t.result;
@@ -436,6 +914,94 @@ function safeBaseName(name) {
   return cleaned.replace(/\.[^.]+$/, '');
 }
 
+// ---------- 落盘：转写成品写到收件箱（四件套进「同名子文件夹」，重名自动加序号防覆盖） ----------
+function persistToOutbox(task, txt, srt, vtt) {
+  const dir = getOutDir();
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  try {
+    const base = task.baseName && task.baseName.trim() ? task.baseName.trim() : '转写结果';
+    // 重名处理：以「同名子文件夹」是否已存在为准，已存在则加 " (2)" / " (3)"…
+    let stem = base;
+    let i = 2;
+    const subProbe = () => path.join(dir, stem);
+    while (fs.existsSync(subProbe())) { stem = `${base} (${i++})`; }
+    const sub = subProbe();
+    fs.mkdirSync(sub, { recursive: true });
+    const write = (ext, content) => fs.promises.writeFile(path.join(sub, stem + ext), content, 'utf8');
+    // .txt 全文（空也不落空文件——无语音时 txt 留占位说明）；srt/vtt 非空才写
+    write('.txt', txt || (task.result && task.result.noSpeech ? '（未检测到语音）' : ''));
+    if (srt) write('.srt', srt);
+    if (vtt) write('.vtt', vtt);
+    const meta = {
+      原名: task.fileName,
+      平台: task.platform || (task.sourceUrl ? '直链' : '本地上传'),
+      来源: (task && task.sourceUrl) ? task.sourceUrl : `本地上传 · ${task.fileName}`,
+      模型: (task.result && task.result.model) || task.model,
+      片长秒: task.durationSec || null,
+      大小MB: task.sizeMB || null,
+      转写用时秒: task.elapsedSec || 0,
+      生成时间: new Date().toISOString(),
+      字数: (txt || '').length,
+      无语音: !!(task.result && task.result.noSpeech),
+      热词生效: (task.hotwordsUsed && task.hotwordsUsed.length) ? task.hotwordsUsed.join('、') : '无',
+      热词跳过: (task.hotwordsSkipped && task.hotwordsSkipped.length) ? task.hotwordsSkipped.join('、') : null,
+    };
+    write('.meta.json', JSON.stringify(meta, null, 2));
+    const files = [`${stem}.txt`];
+    if (srt) files.push(`${stem}.srt`);
+    if (vtt) files.push(`${stem}.vtt`);
+    files.push(`${stem}.meta.json`);
+    task.outDir = dir;
+    // outFiles 记录相对子文件夹的路径（前端下载走 Blob 不依赖此字段，仅台账/审计用）
+    task.outFiles = files.map(f => path.join(stem, f));
+  } catch (e) {
+    // 落盘失败不影响转写结果（仅失去自动落盘能力）
+    task.outDir = dir;
+    task.outError = e.message;
+  }
+}
+
+app.get('/api/config', (req, res) => {
+  res.json({ outDir: getOutDir(), defaultOutDir: DEFAULT_OUT_DIR, hasSessdata: !!settings.biliSessdata, version: '1.0.0', platforms: platformsReady ? ['douyin', 'kuaishou'] : [] });
+});
+
+// ---------- 设置（v0.7+）：输出目录 / B站 SESSDATA / AI 总结配置，持久化 settings.json，重启保留 ----------
+app.get('/api/settings', (req, res) => {
+  res.json({ outDir: getOutDir(), defaultOutDir: DEFAULT_OUT_DIR, envOutDir: process.env.SHIYIN_OUT_DIR || null, hasSessdata: !!settings.biliSessdata, hasAi: !!(settings.aiEndpoint && settings.aiKey), aiEndpoint: settings.aiEndpoint || null, aiModel: settings.aiModel || null, hotwords: (typeof settings.hotwords === 'string' && settings.hotwords.trim()) ? settings.hotwords : null, defaultHotwords: DEFAULT_HOTWORDS });
+});
+app.post('/api/settings', (req, res) => {
+  try {
+    const body = req.body || {};
+    if (typeof body.outDir === 'string') {
+      const d = body.outDir.trim();
+      if (d) {
+        if (!path.isAbsolute(d)) return res.status(400).json({ error: '请填写绝对路径（如 D:/xx/yy）' });
+        try {
+          fs.mkdirSync(d, { recursive: true });
+          const probe = path.join(d, '.write-probe');
+          fs.writeFileSync(probe, 'ok');
+          fs.unlinkSync(probe);
+        } catch { return res.status(400).json({ error: '目录不可写：' + d }); }
+        settings.outDir = d;
+      } else delete settings.outDir; // 空 = 恢复默认
+    }
+    if (typeof body.sessdata === 'string') {
+      const s = body.sessdata.trim();
+      if (s) settings.biliSessdata = s; else delete settings.biliSessdata;
+    }
+    // AI 总结（OpenAI 兼容端点；留空 = 保持不变/清除）
+    if (typeof body.aiEndpoint === 'string') { const v = body.aiEndpoint.trim(); if (v) settings.aiEndpoint = v; else delete settings.aiEndpoint; }
+    if (typeof body.aiKey === 'string') { const v = body.aiKey.trim(); if (v) settings.aiKey = v; else if (!body.aiEndpoint) delete settings.aiKey; }
+    if (typeof body.aiModel === 'string') { const v = body.aiModel.trim(); if (v) settings.aiModel = v; else delete settings.aiModel; }
+    if (typeof body.hotwords === 'string') { const v = body.hotwords.trim(); if (v) settings.hotwords = v; else delete settings.hotwords; }
+    saveSettings();
+    ensureOutDir();
+    res.json({ ok: true, outDir: getOutDir(), hasSessdata: !!settings.biliSessdata, hasAi: !!(settings.aiEndpoint && settings.aiKey) });
+  } catch (e) {
+    res.status(400).json({ error: '保存失败：' + e.message });
+  }
+});
+
 app.post('/api/transcribe', (req, res) => {
   upload.single('file')(req, res, (err) => {
     if (err) {
@@ -465,6 +1031,7 @@ app.post('/api/transcribe', (req, res) => {
     model: activeModel,
     uploadPath: req.file.path,
     useVad: !!(req.body && req.body.useVad),
+    hotwords: (req.body && typeof req.body.hotwords === 'string') ? req.body.hotwords : null,
     startAt: Date.now(),
     createdAt: Date.now(),
   };
@@ -474,6 +1041,42 @@ app.post('/api/transcribe', (req, res) => {
   res.json({ taskId: id });
   }); // upload.single 回调结束
 }); // app.post 结束
+
+// ---------- 链接识别入口：粘贴 URL → yt-dlp 下载 → 复用统一转写 ----------
+app.post('/api/transcribe-url', (req, res) => {
+  const raw = (req.body && req.body.url && String(req.body.url)) || '';
+  const mm = raw.trim().match(/https?:\/\/[A-Za-z0-9\-._~:\/?#@!$&*+,;=%[\]]+/i);
+  if (!mm) return res.status(400).json({ error: '未识别到链接（需包含 http(s):// 开头的网址）' });
+  const url = mm[0].replace(/[),.;，。]+$/, '');
+
+  if (!fs.existsSync(FILE_YTDLP) && !fs.existsSync(path.join(YTDLP_PKG, 'yt_dlp', '__init__.py'))) return res.status(500).json({ error: '下载器未就绪（yt-dlp 缺失），请先安装后再试' });
+  const envMissing = [];
+  if (!fs.existsSync(WHISPER)) envMissing.push('引擎缺失');
+  if (!fs.existsSync(path.join(MODEL_DIR, activeModel))) envMissing.push(`模型未下载：${activeModel}`);
+  if (envMissing.length) return res.status(500).json({ error: envMissing.join('；') });
+  const id = crypto.randomBytes(8).toString('hex');
+  const task = {
+    id,
+    status: 'queued',
+    progress: 0,
+    error: null,
+    result: null,
+    fileName: url,
+    baseName: '链接识别',
+    sizeMB: null,
+    model: activeModel,
+    uploadPath: null,
+    sourceUrl: url,
+    useVad: !!(req.body && req.body.useVad),
+    hotwords: (req.body && typeof req.body.hotwords === 'string') ? req.body.hotwords : null,
+    startAt: Date.now(),
+    createdAt: Date.now(),
+  };
+  tasks.set(id, task);
+  queue.push(id);
+  pump();
+  res.json({ taskId: id });
+});
 
 app.get('/api/tasks', (req, res) => {
   const list = [...tasks.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 30).map((t) => publicTask(t, false));
@@ -493,12 +1096,13 @@ app.post('/api/task/:id/retry', (req, res) => {
   if (t.status !== 'failed') return res.status(400).json({ error: '只有失败的任务可以重试' });
   const ext = path.extname(t.fileName).toLowerCase() || '';
   const mediaPath = path.join(MEDIA_DIR, t.id, t.id + ext);
-  if (!fs.existsSync(mediaPath)) return res.status(400).json({ error: '原始音频已超过保留期（2 小时），请重新上传后再试' });
+  // 本地任务需原始媒体在保留期内；链接任务（sourceUrl）失败时无本地媒体，重新走链接下载
+  if (!t.sourceUrl && !fs.existsSync(mediaPath)) return res.status(400).json({ error: '原始音频已超过保留期（2 小时），请重新上传后再试' });
   t.status = 'queued';
   t.progress = 0;
   t.error = null;
   t.result = null;
-  t.uploadPath = mediaPath; // 直接复用保留的媒体文件（executeTask 会保护不删除）
+  t.uploadPath = t.sourceUrl ? null : mediaPath; // 链接任务重新下载；本地任务复用保留的媒体文件（executeTask 会保护不删除）
   t.startAt = Date.now();
   queue.push(t.id);
   pump();
@@ -543,6 +1147,90 @@ app.post('/api/vad/download', (req, res) => {
   res.json({ ok: true });
 });
 
+// 台账查询（最近 20 条，供验证/前端后续扩展）
+app.get('/api/ledger', (req, res) => {
+  try {
+    if (!fs.existsSync(LEDGER_FILE)) return res.json({ list: [], total: 0 });
+    const lines = fs.readFileSync(LEDGER_FILE, 'utf8').split(/\r?\n/).filter(Boolean);
+    const list = lines.slice(-20).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean).reverse();
+    res.json({ list, total: lines.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------- v0.9.1 AI 总结：字幕/全文 → 摘要/要点/章节（OpenAI 兼容端点，默认关闭、用户自配 key） ----------
+// 隐私提示：内容会发送到所填端点（出本机）；不配置时该功能不启用。
+function aiSummarizeText(content, mode) {
+  const ep = (settings.aiEndpoint || '').trim();
+  const key = (settings.aiKey || '').trim();
+  if (!ep || !key) return Promise.reject(new Error('未配置 AI 总结（设置 → AI 总结：端点 + Key）。内容默认不出本机'));
+  if (!/^https?:\/\//.test(ep)) return Promise.reject(new Error('AI 端点需完整 URL（如 https://api.deepseek.com/chat/completions）'));
+  const maxChars = 6000; // 中文约 1-1.5 token/字，6k 字内兼容多数 8k 上下文模型；超出截断并标注
+  const cut = content.length > maxChars;
+  const text = content.slice(0, maxChars);
+  const system =
+    '你是「拾音」的字幕总结助手。根据用户提供的视频字幕/全文，输出结构化中文结果，直接给内容不要客套。';
+  const prompts = {
+    summary: '请给出：① 一句话摘要（≤40 字）② 3~8 条要点（每条 ≤30 字，分条列出）。使用 Markdown 列表。',
+    bullets: '请提炼 5~10 条要点（每条 ≤40 字），用 Markdown 无序列表。',
+    chapters: '若输入含时间戳（SRT/VTT 风格），请按话题分章节：每节给「章节标题」+ 起止时间 + 2~3 句内容摘要；若不含时间戳则按内容自然分段并给出起始句摘录。使用 Markdown 标题。',
+  };
+  const user = `${prompts[mode] || prompts.summary}\n\n——字幕内容${cut ? '（过长已截断前 ' + maxChars + ' 字）' : ''}——\n${text}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90000);
+  return fetch(ep, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+    body: JSON.stringify({
+      model: settings.aiModel || undefined,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      temperature: 0.3,
+    }),
+    signal: controller.signal,
+  }).then(async (r) => {
+    clearTimeout(timer);
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      throw new Error('AI 端点返回 ' + r.status + (txt ? '：' + txt.slice(0, 200) : ''));
+    }
+    const j = await r.json();
+    const out = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+    if (!out) throw new Error('AI 返回格式异常（无 choices[0].message.content）');
+    return out;
+  }).catch((e) => {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error('AI 请求超时（>90s）');
+    throw e;
+  });
+}
+
+app.post('/api/summarize', (req, res) => {
+  const task = tasks.get((req.body || {}).taskId || '');
+  if (!task || !task.result) return res.status(404).json({ error: '任务不存在或尚无结果，请先展开任务' });
+  const mode = ['summary', 'bullets', 'chapters'].includes((req.body || {}).mode) ? req.body.mode : 'summary';
+  const r = task.result;
+  // 章节模式优先 SRT（含时间戳）；其余用全文
+  const content = mode === 'chapters' && r.srt ? r.srt : (r.text || r.srt || '');
+  if (!content.trim()) return res.status(400).json({ error: '任务没有可总结的文本' });
+  aiSummarizeText(content, mode).then((out) => {
+    res.json({ ok: true, mode, text: out, chars: content.length });
+  }).catch((e) => {
+    res.status(400).json({ error: e.message });
+  });
+});
+
+// ---------- v0.9.1 删除任务：移除内存任务 + 缓存媒体（落盘四件套保留，属用户交付物不动） ----------
+app.delete('/api/task/:id', (req, res) => {
+  const t = tasks.get(req.params.id);
+  if (!t) return res.json({ ok: true, gone: true });
+  if (t.status === 'transcribing' || t.status === 'queued' || t.status === 'preprocess' || t.status === 'uploading') {
+    return res.status(400).json({ error: '任务正在处理中，请稍后再删除' });
+  }
+  tasks.delete(t.id);
+  const mediaDir = path.join(MEDIA_DIR, t.id);
+  if (fs.existsSync(mediaDir)) fs.rmSync(mediaDir, { recursive: true, force: true });
+  res.json({ ok: true });
+});
+
 // 媒体文件静态服务（express.static 自带 Range 支持，播放器 seek 可用）
 app.use('/media', express.static(MEDIA_DIR, { maxAge: '1h', fallthrough: true }));
 
@@ -576,7 +1264,10 @@ setInterval(() => {
 }, 600_000).unref();
 
 app.listen(PORT, HOST, () => {
-  console.log(`🐋 拾音 v0.3 已启动: http://${HOST}:${PORT}`);
+  console.log(`拾音 v1.0.0 已启动: http://${HOST}:${PORT}`);
+  console.log(`  收件箱（落盘目录）: ${getOutDir()}`);
+  console.log(`  多平台适配器: ${platformsReady ? '✅ 抖音/快手已就绪' : '❌ 未就绪（playwright-core 缺失）'}`);
+  console.log(`  yt-dlp 链接下载器: ${fs.existsSync(path.join(YTDLP_PKG, 'yt_dlp', '__init__.py')) || fs.existsSync(FILE_YTDLP) ? '✅ 就绪' : '❌ 缺失（链接识别不可用）'}`);
   const vadPath = path.join(MODEL_DIR, VAD_MODEL);
   console.log(`  VAD 静音检测: ${fs.existsSync(vadPath) ? '✅ 已就绪' : '❌ 未下载（面板可一键下载）'}`);
   for (const name of Object.keys(MODELS)) {

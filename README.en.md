@@ -1,13 +1,13 @@
-# 拾音 (shiyin) — Local Audio/Video to Text
+# 拾音 (shiyin) — Local Audio/Video/Link to Text
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](RELEASE.md)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](RELEASE.md)
 [![Node](https://img.shields.io/badge/Node.js-18+-green.svg)](package.json)
 [![CI](https://github.com/x1303145921/shiyin/actions/workflows/ci.yml/badge.svg)](https://github.com/x1303145921/shiyin/actions/workflows/ci.yml)
 
 > Speak, and it becomes text — an offline speech-to-text tool that keeps your files on your machine.
 
-**拾音 (shiyin)** is a fully local, offline audio/video-to-text tool powered by [whisper.cpp](https://github.com/ggerganov/whisper.cpp). Your audio files **never leave your computer** — everything runs on-device, ideal for meeting recordings, lecture notes, and interviews where privacy matters.
+**拾音 (shiyin)** is a fully local, offline audio/video/link-to-text tool powered by [whisper.cpp](https://github.com/ggerganov/whisper.cpp)(https://github.com/ggerganov/whisper.cpp). Your audio files **never leave your computer** — everything runs on-device, ideal for meeting recordings, lecture notes, and interviews where privacy matters.
 
 - **100% local**: server listens on `127.0.0.1` only; files and models never leave your machine
 - **Web UI**: double-click to launch, use in browser; needs Node.js 18+
