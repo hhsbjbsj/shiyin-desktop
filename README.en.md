@@ -10,6 +10,7 @@
 **拾音 (shiyin)** is a fully local, offline audio/video/link-to-text tool powered by [whisper.cpp](https://github.com/ggerganov/whisper.cpp)(https://github.com/ggerganov/whisper.cpp). Your audio files **never leave your computer** — everything runs on-device, ideal for meeting recordings, lecture notes, and interviews where privacy matters.
 
 - **100% local**: server listens on `127.0.0.1` only; files and models never leave your machine
+- **Paste a link**: drop a Bilibili/YouTube/Douyin/Kuaishou URL and get text — official subtitles are fetched in ~1s when available
 - **Web UI**: double-click to launch, use in browser; needs Node.js 18+
 - **Three outputs**: txt / srt / vtt — switch and edit inline, saved instantly
 - **Subtitle follow-along**: built-in player + clickable subtitle lines with precise seeking
@@ -29,6 +30,11 @@
 | ↻ **One-click retry** | Failed tasks retry with the original media kept — no re-upload |
 | 🎚 **Model manager** | base / small / turbo tiers, one-click download, switch & delete (hf-mirror.com) |
 | 🔔 **Background notification** | Tab title flashes when transcription finishes while page is in background |
+| 🔗 **Link distillation** | Paste a video link → transcription: Bilibili official API / YouTube subtitles-first / Douyin & Kuaishou adapters, auto-saved to inbox |
+| 🎬 **Instant subtitles** | Bilibili/YouTube videos with official/AI subtitles output text in ~1s with zero compute |
+| 🗂 **4-file archive** | Results auto-archived as `txt/srt/vtt/meta.json` in a same-name subfolder; output dir configurable |
+| 🔤 **Hotwords** | Fix proper-noun misrecognition (e.g. Crawl4AI→CrossAI) via an API/settings word list |
+| 🤖 **AI summary** | Optional OpenAI-compatible endpoint: summary/key points/sectioned (off by default, content leaves machine only if you enable it) |
 | 📦 **PWA installable** | Install to desktop/taskbar, runs in standalone window |
 
 ## 🖼 Preview
@@ -49,7 +55,9 @@
 
 1. Install [Node.js 18+](https://nodejs.org/en/download)
 2. Double-click `启动拾音.bat` — the service starts and the browser opens `http://127.0.0.1:18900`
-3. Download a model in the Model Manager (recommended: **turbo**), drag an audio/video file onto the page, click **开始识别**
+3. Download a model in the Model Manager (recommended: **turbo**)
+4. **Local file**: drag an audio/video file in, pick model & VAD, hit Start
+   **Video link**: paste a Bilibili/YouTube/Douyin/Kuaishou URL — official subtitles are used instantly when available onto the page, click **开始识别**
 
 ### macOS / Linux
 
