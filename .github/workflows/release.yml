@@ -1,0 +1,31 @@
+name: Windows release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  package:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build the Windows package
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -Tag $env:GITHUB_REF_NAME
+      - name: Publish the verified Windows package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME ./dist/Shiyin-win-x64.zip --verify-tag --draft --title "拾音 $env:GITHUB_REF_NAME" --notes "首次使用请解压并运行 ShiyinLauncher.exe。已有桌面版可从启动器检查并安装更新。"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit $env:GITHUB_REF_NAME --draft=false --latest

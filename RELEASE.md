@@ -1,3 +1,26 @@
+# 桌面版发布与更新
+
+当前桌面版为 v1.1.0，维护仓库为 https://github.com/hhsbjbsj/shiyin-desktop 。
+
+首次安装下载 Shiyin-win-x64.zip 并解压，运行 ShiyinLauncher.exe。包内包含 Node.js 和 .NET 桌面运行时。首次启动会从固定版本的官方 Release 下载缺少的 Whisper CPU 引擎、FFmpeg 和 yt-dlp，并核对 SHA-256。识别模型在网页中按需下载。已有 GPU 引擎继续使用已有文件。
+
+后续更新在启动器点「检查更新」，确认后下载正式 Release 的 Windows 包。应用核对 GitHub 提供的 SHA-256、版本和包内容，空闲时停止服务，更换应用文件并恢复服务。安装失败会尝试回退。识别引擎、模型、设置、缓存和导出结果位于应用更新清单之外。
+
+维护者发布新版时修改 package.json 和 package-lock.json 的版本，提交到 main，再创建并推送对应标签。
+
+```powershell
+git add .
+git commit -m "release: v1.1.1"
+git push origin main
+git tag v1.1.1
+git push origin v1.1.1
+```
+
+GitHub Actions 的 Windows release 工作流会验证版本、构建桌面包并上传正式 Release。新版本需要高于已安装版本。请在 Release 工作流完成后再通知用户更新。可用 pwsh -File scripts/package-windows.ps1 在 Windows 本地预先构建。
+
+桌面包与源码目录建议分开，避免应用内更新覆盖尚未提交的开发修改。Windows 包尚未做代码签名。
+
+---
 # 发布指南 · Release
 
 发布新版本的完整流程（维护者用）。

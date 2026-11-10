@@ -1,11 +1,11 @@
 # 拾音 · 本地音频/视频/链接转文字
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](RELEASE.md)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](RELEASE.md)
 
-> 版本状态：**v1.0.0 · 【功能整合定版】**（2026-09-09）。吸收自用分支全部成熟能力：粘贴链接直接转文字（B站/YouTube/抖音/快手）、官方字幕秒出、AI 总结、热词、自动落盘收件箱。
+> 桌面版 **v1.1.0** 基于 [拾音原项目](https://github.com/x1303145921/shiyin)。提供 Windows 启动器、工作台、媒体缓存清理和应用内更新。
 [![Node](https://img.shields.io/badge/Node.js-18+-green.svg)](package.json)
-[![CI](https://github.com/x1303145921/shiyin/actions/workflows/ci.yml/badge.svg)](https://github.com/x1303145921/shiyin/actions/workflows/ci.yml)
+[![CI](https://github.com/hhsbjbsj/shiyin-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/hhsbjbsj/shiyin-desktop/actions/workflows/ci.yml)
 
 > 开口即录，落笔成文 —— 文件不出电脑的语音转文字工具。
 
@@ -49,11 +49,13 @@
 
 | 方式 | 适合谁 | 操作 |
 |---|---|---|
-| **git clone** | 想直接用的所有人 | `git clone https://github.com/x1303145921/shiyin.git` |
+| **git clone** | 查看和维护源码 | `git clone https://github.com/hhsbjbsj/shiyin-desktop.git` |
 | **源码 ZIP** | 只想先看看 | 仓库页面绿色 `Code` 按钮 → `Download ZIP` |
-| **Releases** | 追版本更新 | [Releases 页面](https://github.com/x1303145921/shiyin/releases)（含源码包与发布说明） |
+| **Windows 桌面版** | 首次安装 | 在 [Releases](https://github.com/hhsbjbsj/shiyin-desktop/releases/latest) 下载 `Shiyin-win-x64.zip`，解压后双击 `ShiyinLauncher.exe` |
 
-> 💡 拾音依赖 Node.js 18+（[官方下载](https://nodejs.org/zh-cn/download)）；whisper 模型约 141~547 MB，首次使用时在「模型管理」面板一键下载。
+桌面包适用于 Windows x64，已包含 Node.js 和 .NET 桌面运行时。首次启动会下载缺少的转写工具，网页里的「模型管理」负责下载识别模型。已有桌面版用户以后可在启动器点「检查更新」。应用会从 Releases 下载并校验更新，队列空闲后安装。模型、识别引擎、设置和已保存字幕继续使用原来的文件。
+
+维护者可在 Windows 上运行 `pwsh -File scripts/package-windows.ps1` 本地打包。修改 `package.json` 和 `package-lock.json` 中的版本后，推送对应的 `vX.Y.Z` 标签，GitHub Actions 会构建桌面包并发布到 Releases。应用只提示比已安装版本更高的正式版本。
 
 ## 🚀 快速开始（Windows 小白版）
 
@@ -62,6 +64,10 @@
 安装 [Node.js 18+](https://nodejs.org/zh-cn/download)（一路下一步即可）。
 
 ### 第 2 步：启动
+
+如果项目目录中有 Windows 启动器 ShiyinLauncher.exe，双击后点「启动拾音」。启动器会在后台启动本地服务，并在默认浏览器打开转写页面。关闭启动器后服务继续运行，可重新打开启动器查看状态、打开输出目录或停止服务。
+
+启动器源码位于 launcher，使用 .NET 10 SDK 在 Windows 上运行 launcher/build.ps1，可在项目根目录生成 ShiyinLauncher.exe。运行该 EXE 需要 .NET 10 Desktop Runtime x64。
 
 双击 `启动拾音.bat` —— 服务自动在后台启动，浏览器自动打开 `http://127.0.0.1:18900`。
 
@@ -162,12 +168,13 @@ npm start
 | **浏览器图标还是旧的？** | 强制刷新：浏览器 Ctrl+F5；PWA 固定图标需取消固定再重新固定；Windows 桌面图标残留请重跑 `安装到桌面.bat`（自动刷新图标缓存） |
 | **支持哪些格式？** | 常见音视频格式均可（wav/mp3/m4a/flac/mp4/mkv/avi 等，内部经 ffmpeg 处理）；已是 16kHz 单声道 WAV 时跳过转码直识别 |
 | **能识别方言/英文吗？** | 默认中文（`-l zh`）；whisper.cpp 支持多语言，可通过服务端参数调整 |
-| **会联网吗？** | 仅下载模型时联网（hf-mirror.com）；转写全程离线，音频不出电脑 |
+| **会联网吗？** | 下载模型、读取链接字幕或下载链接媒体时需要联网。本地音视频的转写在电脑上完成。 |
 
 ## 🔒 隐私与安全
 
 - 服务仅监听 `127.0.0.1`，不对外网开放；请勿修改监听地址暴露到局域网/公网
-- 上传文件与转写中间产物在任务生命周期结束后自动清理
+- 链接有可用字幕时可直接取字幕。需要转写时通常只下载音轨，部分平台会下载视频再提取音轨。
+- 完成后可在任务里点「清理媒体」并确认，删除跟读用的媒体缓存。服务启动时及运行期间每 10 分钟清理一次超过 2 小时的媒体缓存和中断留下的链接下载文件。字幕、文本和本地上传的源文件保留。
 - 前端不依赖任何第三方 CDN，无外部脚本注入面
 - 完整安全边界见 [SECURITY.md](SECURITY.md)
 

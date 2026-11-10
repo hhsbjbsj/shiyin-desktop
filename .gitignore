@@ -3,6 +3,13 @@
 # ---- 依赖与运行产物 ----
 node_modules/
 *.log
+/launcher/obj/
+/ShiyinLauncher.exe
+/node.exe
+/Node-LICENSE.txt
+/Dotnet-LICENSE.txt
+/dist/
+/.shiyin-update*
 
 # ---- 模型与引擎（体积大 / 走内置下载器，不入库）----
 models/

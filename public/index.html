@@ -4,222 +4,138 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>拾音 · 本地音频/视频/链接转文字</title>
-<meta name="theme-color" content="#55b3ee">
+<meta name="theme-color" content="#f5f7fc">
 <link rel="icon" href="/app-icon.ico?v=7">
 <link rel="apple-touch-icon" href="/app-icon-512.png">
 <link rel="manifest" href="/manifest.json">
-<style>
-  :root {
-    --bg: #f4f6f9; --card: #ffffff; --ink: #26303c; --muted: #8792a3;
-    --brand: #55b3ee; --brand-deep: #3f8fdc; --brand-soft: #e8f4fd; --line: #e3e9f1;
-    --ok: #2e9e62; --warn: #d0882f; --err: #d0554a;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--ink); font-family: "Microsoft YaHei", system-ui, sans-serif; line-height: 1.6; }
-  header { background: linear-gradient(135deg, #3f8fdc, #6ec1f2); color: #fff; padding: 18px 28px; display: flex; align-items: center; gap: 14px; }
-  header .logo { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; box-shadow: 0 2px 6px rgba(0,0,0,.18); }
-  header h1 { font-size: 20px; font-weight: 700; letter-spacing: 1px; }
-  header .sub { font-size: 12.5px; opacity: .85; margin-top: 1px; }
-  header .spacer { flex: 1; }
-  header .status { font-size: 12.5px; background: rgba(255,255,255,.15); padding: 4px 12px; border-radius: 999px; }
-  .wrap { display: flex; gap: 18px; padding: 18px; max-width: 1280px; margin: 0 auto; align-items: flex-start; }
-  .main { flex: 2.2; min-width: 0; }
-  .side { flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 18px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
-  .card h2 { font-size: 15px; margin-bottom: 12px; color: var(--brand); }
-
-  /* 拖拽区 */
-  #drop { border: 2px dashed #b9c9dd; border-radius: 14px; background: #fbfcfe; padding: 30px 20px; text-align: center; cursor: pointer; transition: all .18s; }
-  #drop:hover { border-color: var(--brand); background: var(--brand-soft); }
-  #drop.drag { border-color: var(--brand); background: var(--brand-soft); transform: scale(1.01); }
-  #drop .big { font-size: 34px; }
-  #drop .t1 { font-size: 15px; font-weight: 600; margin-top: 6px; }
-  #drop .t2 { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
-  #drop .t3 { font-size: 12px; color: var(--muted); margin-top: 10px; }
-
-  /* 任务区头部 */
-  .listhead { display: flex; align-items: center; gap: 10px; margin: 14px 2px 0; }
-  .listhead .lt { font-size: 13px; color: var(--muted); flex: 1; }
-
-  /* 任务列表 */
-  .task { border: 1px solid var(--line); border-radius: 12px; padding: 13px 16px; margin-top: 10px; background: var(--card); transition: box-shadow .18s, border-color .18s; }
-  .task:hover { border-color: #c9d8ea; box-shadow: 0 3px 12px rgba(50,90,140,.07); }
-  .task .row1 { display: flex; align-items: center; gap: 10px; }
-  .task .fname { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; cursor: pointer; }
-  .task .fname:hover { color: var(--brand); }
-  .task .fmeta { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
-  .delbtn { border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; padding: 0 3px; border-radius: 6px; }
-  .delbtn:hover { color: var(--err); background: #fbe9e7; }
-  .badge { font-size: 11.5px; padding: 2px 10px; border-radius: 999px; white-space: nowrap; }
-  .badge.queued { background: #eef1f5; color: #5b6575; }
-  .badge.preprocess, .badge.transcribing { background: var(--brand-soft); color: var(--brand); }
-  .badge.done { background: #e2f5ea; color: var(--ok); }
-  .badge.failed { background: #fbe9e7; color: var(--err); }
-  .bar { height: 6px; background: #e9eef4; border-radius: 99px; margin-top: 9px; overflow: hidden; }
-  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #55b3ee, #6ec1f2); border-radius: 99px; transition: width .5s; }
-  .task .result { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; }
-  .rtabs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .rtab { font-size: 12px; padding: 3px 12px; border-radius: 999px; background: #f0f3f7; color: #5b6575; cursor: pointer; border: none; }
-  .rtab.on { background: var(--brand); color: #fff; }
-  .rtab.act { background: transparent; border: 1px solid var(--line); }
-  .rtab.act:hover { border-color: var(--brand); color: var(--brand); }
-  .rtabs .grow { flex: 1; }
-  .rcount { font-size: 11.5px; color: var(--muted); }
-  .task textarea { width: 100%; min-height: 160px; max-height: 340px; background: #f7f9fc; border: 1px solid var(--line); border-radius: 10px; padding: 12px; font-size: 13px; line-height: 1.8; margin-top: 8px; resize: vertical; font-family: inherit; color: var(--ink); }
-  .task textarea:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
-  .nospeech { color: var(--warn); font-size: 13px; margin-top: 8px; }
-  .task .errmsg { color: var(--err); font-size: 12.5px; margin-top: 8px; }
-  .empty { text-align: center; color: var(--muted); font-size: 13px; padding: 26px 0; }
-
-  /* 模型管理 */
-  .model { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; margin-bottom: 9px; }
-  .model.active { border-color: var(--brand); background: var(--brand-soft); }
-  .model .mname { font-size: 13px; font-weight: 600; font-family: Consolas, monospace; word-break: break-all; }
-  .model .minfo { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
-  .model .mrow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-  .btn { font-size: 12px; padding: 4px 14px; border-radius: 8px; border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--ink); transition: all .15s; }
-  .btn:hover { border-color: var(--brand); color: var(--brand); }
-  .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
-  .btn.primary:hover { background: var(--brand-deep); color: #fff; }
-  .btn:disabled { opacity: .5; cursor: not-allowed; }
-  .btn.sm { padding: 3px 10px; font-size: 11.5px; }
-  .mstatus { font-size: 11px; margin-left: auto; }
-  .mstatus.ok { color: var(--ok); }
-  .mstatus.off { color: var(--muted); }
-  .mbar { height: 5px; background: #e9eef4; border-radius: 99px; margin-top: 7px; overflow: hidden; }
-  .mbar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #3f8fdc, #efae63); transition: width .5s; }
-  .mspeed { font-size: 11px; color: var(--muted); margin-top: 3px; }
-
-  .note { font-size: 12px; color: var(--muted); }
-  .note li { margin: 5px 0; list-style: none; }
-  .note li::before { content: "· "; color: var(--brand); font-weight: 700; }
-  .tip { font-size: 11.5px; color: var(--muted); text-align: center; margin-top: 12px; }
-  .toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); background: #2b3645; color: #fff; padding: 10px 22px; border-radius: 10px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 99; }
-  .toast.show { opacity: 1; }
-
-  /* 保存对话框 */
-  .modal-mask { position: fixed; inset: 0; background: rgba(20,28,40,.45); display: none; align-items: center; justify-content: center; z-index: 50; }
-  .modal-mask.show { display: flex; }
-  .modal { background: #fff; border-radius: 14px; padding: 22px 26px; width: 420px; max-width: calc(100vw - 40px); box-shadow: 0 18px 50px rgba(20,28,40,.28); }
-  .modal h3 { font-size: 16px; margin-bottom: 16px; }
-  .srow { margin-bottom: 14px; }
-  .srow label.slbl { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 5px; }
-  .srow input[type=text] { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; }
-  .srow input[type=text]:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
-  .fmtopts { display: flex; gap: 14px; flex-wrap: wrap; }
-  .fmtopts label { font-size: 13px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
-  .fmtopts input { accent-color: var(--brand); }
-  .shint { font-size: 11.5px; color: var(--muted); background: var(--brand-soft); border-radius: 8px; padding: 8px 12px; margin-bottom: 14px; }
-  .sbtns { display: flex; justify-content: flex-end; gap: 10px; }
-
-  /* v0.3 播放器与字幕跟读 */
-  .vadopt { margin-top: 10px; font-size: 12.5px; color: var(--muted); }
-  .vadopt label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-  .vadopt input { accent-color: var(--brand); }
-  .vadopt .vhint { font-size: 11.5px; color: var(--warn); margin-left: 4px; }
-  .urlrow { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-  .urlrow input[type=text] { flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; font-size: 13px; background: #fbfcfe; }
-  .urlrow input[type=text]:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
-  .player { width: 100%; margin-top: 8px; border-radius: 10px; background: #f0f3f7; }
-  video.player { max-height: 260px; }
-  .cuelist { margin-top: 8px; max-height: 300px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: #f7f9fc; }
-  .cue { display: flex; gap: 10px; padding: 7px 12px; border-bottom: 1px solid #eef2f7; cursor: pointer; font-size: 13px; line-height: 1.55; }
-  .cue:last-child { border-bottom: none; }
-  .cue:hover { background: var(--brand-soft); }
-  .cue.on { background: #dcebfc; box-shadow: inset 3px 0 0 var(--brand); }
-  .cue .ctime { color: var(--brand); font-family: Consolas, monospace; font-size: 12px; white-space: nowrap; padding-top: 1px; }
-  .cue .ctext { flex: 1; word-break: break-all; }
-  .cuenav { margin-top: 8px; display: flex; gap: 8px; align-items: center; }
-  .cuenav .cn-hint { font-size: 11.5px; color: var(--muted); flex: 1; }
-.cuesearch { font-size: 11.5px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); width: 120px; }
-.cuesearch:focus { outline: none; border-color: var(--brand); }
-.cuespeed { font-size: 11.5px; padding: 2px 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
-.listsearch { font-size: 12px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); width: 130px; }
-.listsearch:focus { outline: none; border-color: var(--brand); }
-  .cueempty { padding: 16px; text-align: center; color: var(--muted); font-size: 12.5px; }
-  .srow input[type=password] { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; }
-  .srow input[type=password]:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
-  .sbtns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
-  /* v0.9.1 字幕工具条 + AI 总结 */
-  .toolrow { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; flex-wrap: wrap; }
-  .toolrow .tl-hint { font-size: 11px; color: var(--muted); margin-right: 2px; }
-  .toolrow .offin { width: 76px; font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
-  .toolrow .offin:focus { outline: none; border-color: var(--brand); }
-  .toolrow .statline { font-size: 11.5px; color: var(--muted); }
-  .toolrow .statline b { color: var(--ink); font-weight: 600; }
-  .aiout { width: 100%; min-height: 200px; max-height: 46vh; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.7; font-family: inherit; resize: vertical; background: #fbfcfe; }
-  .aimode { display: flex; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink); }
-  .aimode label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
-  .aimode input { accent-color: var(--brand); }
-  .aihead { display: flex; align-items: center; gap: 10px; }
-  .aihead .ai-hint { font-size: 11.5px; color: var(--muted); flex: 1; }
-  .plt { display: inline-block; font-size: 10.5px; padding: 0 6px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); margin-left: 6px; vertical-align: 1px; }
-</style>
+<link rel="stylesheet" href="/workspace.css">
 </head>
 <body>
 
-<header>
-  <img class="logo" src="/app-icon.png?v=7" alt="拾音">
-  <div>
-    <h1>拾音</h1>
-    <div class="sub">本地音频/视频/链接 → 文字 · whisper.cpp 引擎 · 文件不出电脑</div>
+<svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.4"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 12h3l3-6 4 12 3-6h5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12M3.5 6h.5M3.5 12h.5M3.5 18h.5"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9 3v3m6-3v3M9 18v3m6-3v3M3 9h3m-3 6h3m12-6h3m-3 6h3"/><rect x="10" y="10" width="4" height="4" rx=".5"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M10 3h4l.6 2.4 2 .9 2.2-1.1 2 3.5-1.8 1.7v3.2l1.8 1.7-2 3.5-2.2-1.1-2 .9L14 21h-4l-.6-2.4-2-.9-2.2 1.1-2-3.5L5 13.6v-3.2L3.2 8.7l2-3.5 2.2 1.1 2-.9L10 3z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 1 1 8 0v3m-4 5v2"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V3m-5 5 5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="m10 13 4-4m-7 7-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0m4 8a3.5 3.5 0 0 0 5 0l4-4a3.5 3.5 0 0 0-5-5l-1 1" transform="translate(1 1) scale(.91)"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 24 24"><path d="M8 4v16m-4-4 4 4 4-4m2-12h6m-6 5h4m-4 5h2"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm8 0v5h4m-10 5h6m-6 4h6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+</svg>
+
+<header class="appbar">
+  <a class="brand" href="#workspace" aria-label="拾音工作台">
+    <img src="/app-icon.png?v=7" width="34" height="34" alt="">
+    <span>拾音</span>
+  </a>
+  <span class="appbar-caption">本地转写</span>
+  <div class="appbar-actions">
+    <span class="status" id="headStatus" role="status">连接中…</span>
+    <button type="button" class="btn settings-button" id="cfgBtn" title="设置" aria-label="设置">
+      <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>设置</span>
+    </button>
   </div>
-  <div class="spacer"></div>
-  <button class="btn sm" id="cfgBtn" title="设置：自动落盘目录 / B站登录态">⚙ 设置</button>
-  <span class="status" id="headStatus">连接中…</span>
 </header>
 
-<div class="wrap">
-  <div class="main">
-    <div id="drop">
-      <div class="big">📥</div>
-      <div class="t1">拖入音频 / 视频文件，或点击选择</div>
-      <div class="t2">支持 mp3 wav m4a flac mp4 … 多文件批量排队识别</div>
-      <div class="t3">文件仅在本地处理，不会上传到任何服务器</div>
-    </div>
-    <input type="file" id="fileInput" multiple accept="audio/*,video/*,.mp3,.wav,.m4a,.flac,.aac,.ogg,.wma,.mp4,.mkv,.mov,.avi,.flv,.ts" style="display:none">
-    <div class="vadopt">
-      <label title="用静音检测模型跳过静音段：长音频/播客更快，减少环境声幻觉"><input type="checkbox" id="useVad"> 🧹 跳过静音段（VAD，长音频更快）<span class="vhint" id="vadHint" style="display:none">需先下载静音检测模型</span></label>
-    </div>
-    <div class="urlrow" id="urlRow">
-      <input type="text" id="urlInput" placeholder="粘贴链接或分享文案（自动识别，多条用换行/逗号分隔）" spellcheck="false" autocomplete="off">
-      <button class="btn primary sm" id="urlGo">识别链接</button>
-    </div>
-    <div class="listhead">
-      <span class="lt" id="listTitle">任务列表</span>
-      <input class="listsearch" id="taskSearch" placeholder="🔍 搜文件名" title="按文件名搜索任务">
-      <button class="btn sm" id="sortBtn" title="切换排序：时间新→旧 / 旧→新">⏱ 新→旧</button>
-      <button class="btn sm" id="clearDone" style="display:none">🗑 清空已完成</button>
-    </div>
-    <div id="taskList"></div>
-  </div>
+<div class="app-shell">
+  <nav class="rail" aria-label="工作台导航">
+    <a class="rail-link selected" href="#workspace"><svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg>工作台</a>
+    <a class="rail-link" href="#tasks"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>转写任务</a>
+    <a class="rail-link" href="#models"><svg class="icon" aria-hidden="true"><use href="#i-chip"/></svg>模型管理</a>
+    <div class="rail-note"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg><span>本地工作区<br><small>文件在本机转写</small></span></div>
+  </nav>
 
-  <div class="side">
-    <div class="card">
-      <h2>🧠 识别模型</h2>
-      <div id="modelList"></div>
+  <main class="workspace" id="workspace">
+    <section class="hero" aria-labelledby="workspace-title">
+      <div class="hero-copy">
+        <span class="hero-label"><svg class="icon" aria-hidden="true"><use href="#i-wave"/></svg>语音转写工作台</span>
+        <h1 id="workspace-title">把声音变成文字</h1>
+        <p>导入音频、视频或链接，在本机生成可编辑的文稿与字幕。</p>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <img src="/workspace-hero.webp" width="1080" height="540" alt="">
+      </div>
+    </section>
+
+    <div class="workspace-grid">
+      <div class="main-column">
+        <section class="card composer" aria-labelledby="source-title">
+          <div class="panel-heading">
+            <div><h2 id="source-title">添加素材</h2><p>选择本地文件，也可以从视频链接开始。</p></div>
+          </div>
+          <button type="button" id="drop" aria-label="选择音频或视频文件">
+            <span class="drop-icon"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg></span>
+            <span class="drop-copy"><strong>拖入音频或视频</strong><span>支持 MP3、WAV、MP4 等，可批量添加</span></span>
+            <span class="btn primary">选择文件</span>
+          </button>
+          <input type="file" id="fileInput" multiple accept="audio/*,video/*,.mp3,.wav,.m4a,.flac,.aac,.ogg,.wma,.mp4,.mkv,.mov,.avi,.flv,.ts" hidden>
+          <div class="urlrow" id="urlRow">
+            <label class="field-with-icon">
+              <svg class="icon" aria-hidden="true"><use href="#i-link"/></svg>
+              <input type="text" id="urlInput" aria-label="视频链接" placeholder="粘贴视频链接或分享文案" title="多条链接可用换行或逗号分隔" spellcheck="false" autocomplete="off">
+            </label>
+            <button type="button" class="btn tonal" id="urlGo">识别链接</button>
+          </div>
+          <div class="vadopt">
+            <label for="useVad" title="使用静音检测模型跳过静音段">
+              <input type="checkbox" id="useVad" role="switch" aria-describedby="vadHint">
+              <span>跳过静音段</span>
+            </label>
+            <span class="vhint" id="vadHint" style="display:none">需先下载静音检测模型</span>
+          </div>
+        </section>
+
+        <section class="tasks-section" id="tasks" aria-labelledby="tasks-title">
+          <div class="listhead">
+            <div class="section-title"><h2 id="tasks-title">转写任务</h2><span class="lt" id="listTitle">0 项</span></div>
+            <div class="task-filters">
+              <label class="field-with-icon search-field">
+                <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+                <input class="listsearch" id="taskSearch" placeholder="搜索任务" aria-label="按文件名搜索任务">
+              </label>
+              <button type="button" class="btn sm" id="sortBtn" title="切换时间排序"><svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg><span>最新优先</span></button>
+              <button type="button" class="btn sm" id="clearDone" style="display:none">清理任务</button>
+            </div>
+          </div>
+          <div id="taskList"></div>
+        </section>
+      </div>
+
+      <aside class="side">
+        <section class="card models-panel" id="models" aria-labelledby="models-title">
+          <div class="panel-heading"><div><h2 id="models-title">识别模型</h2><p>选择速度与精度。</p></div><span class="panel-icon"><svg class="icon" aria-hidden="true"><use href="#i-chip"/></svg></span></div>
+          <div id="modelList"><p class="model-placeholder">正在读取模型…</p></div>
+        </section>
+        <section class="card storage-panel" aria-labelledby="output-title">
+          <div class="panel-heading"><div><h2 id="output-title">自动保存</h2><p>转写结果保存到</p></div><span class="panel-icon"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg></span></div>
+          <code class="output-path" id="tipOutDir">正在读取…</code>
+          <details class="workspace-help">
+            <summary>使用说明</summary>
+            <ul>
+              <li>支持 B 站、抖音、快手、YouTube 和媒体直链。</li>
+              <li>转写完成后可以编辑全文、跟读和导出 TXT、SRT、VTT。</li>
+              <li>跟读用的媒体缓存保留约 2 小时，也可以在任务里提前清理。</li>
+              <li>可在设置里更改输出目录，识别结果也会保存在当前浏览器。</li>
+            </ul>
+          </details>
+        </section>
+      </aside>
     </div>
-    <div class="card">
-      <h2>💡 小贴士</h2>
-      <ul class="note">
-        <li>识别完成自动落盘到：<b id="tipOutDir">…</b>（txt/srt/vtt/meta 四件套，可在 ⚙ 设置 修改）</li>
-        <li>粘贴视频链接可免下载直接识别（B站/抖音/快手/YouTube/直链）</li>
-        <li>识别结果自动转为简体中文，可在文本框里直接修改</li>
-        <li>保存时可选 txt / srt / vtt 格式、自定义文件名、选择保存位置</li>
-        <li>无语音片段会标记「未检测到语音」，不产生空结果</li>
-        <li>结果自动保存在本浏览器，刷新页面不丢失</li>
-        <li>服务仅监听本机（127.0.0.1），放心使用</li>
-      </ul>
-    </div>
-  </div>
+  </main>
 </div>
 
 <!-- 保存对话框 -->
 <div class="modal-mask" id="saveMask">
-  <div class="modal">
-    <h3>💾 保存转写结果</h3>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="saveTitle">
+    <h3 id="saveTitle">保存转写结果</h3>
     <div class="srow">
-      <label class="slbl">文件名（默认 = 音视频文件名，可修改）</label>
+      <label class="slbl" for="saveName">文件名</label>
       <input type="text" id="saveName" spellcheck="false">
     </div>
     <div class="srow">
@@ -232,7 +148,7 @@
     </div>
     <p class="shint" id="saveLocHint"></p>
     <div class="srow">
-      <button class="btn sm" id="pickDir">📁 选择文件夹并记住</button>
+      <button class="btn sm" id="pickDir">选择并记住文件夹</button>
       <button class="btn sm" id="forgetDir" style="display:none">清除记忆</button>
     </div>
     <div class="sbtns">
@@ -243,20 +159,20 @@
 </div>
 
 <div class="modal-mask" id="cfgMask">
-  <div class="modal">
-    <h3>⚙ 设置</h3>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cfgTitle">
+    <h3 id="cfgTitle">设置</h3>
     <div class="srow">
-      <label class="slbl">自动落盘目录（识别完成自动写 txt/srt/vtt/meta 的位置）</label>
+      <label class="slbl" for="cfgOutDir">转写结果保存目录</label>
       <input type="text" id="cfgOutDir" spellcheck="false" autocomplete="off">
       <div class="shint" style="margin-top:8px" id="cfgOutHint"></div>
     </div>
     <div class="srow">
-      <label class="slbl">B站登录 Cookie · SESSDATA（可选）</label>
+      <label class="slbl" for="cfgSess">B 站登录 Cookie · SESSDATA（可选）</label>
       <input type="password" id="cfgSess" placeholder="sessdata=xxxx…" autocomplete="off" spellcheck="false">
       <div class="shint" style="margin-top:8px">填了可解锁 B站官方 AI 字幕：有字幕的视频直接取字幕秒出（零算力，跳过转写）。仅存本机 settings.json，不会外传；建议用不常用的小号，泄露风险自担。</div>
     </div>
     <div class="srow">
-      <label class="slbl">AI 总结（可选，默认关闭；内容会发送到你填的端点 = 出本机）</label>
+      <label class="slbl" for="cfgAiEndpoint">AI 总结端点（可选，启用后内容会发送到该端点）</label>
       <input type="text" id="cfgAiEndpoint" placeholder="https://api.deepseek.com/chat/completions" spellcheck="false" autocomplete="off">
       <div class="shint" style="margin-top:6px">端点需 OpenAI 兼容完整 URL（DeepSeek / 智谱 / 通义 / 任意中转都行）；Key 只存本机。
       <input type="password" id="cfgAiKey" placeholder="sk-…" autocomplete="off" spellcheck="false" style="margin-top:6px">
@@ -273,9 +189,9 @@
 </div>
 
 <div class="modal-mask" id="aiMask">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="aiTitle">
     <div class="aihead">
-      <h3 style="margin:0">✨ AI 总结</h3>
+      <h3 style="margin:0" id="aiTitle">AI 总结</h3>
       <span class="ai-hint">字幕/全文发送到所配 AI 端点（默认关闭，内容出本机）。结果可编辑后复制或存为 .md</span>
     </div>
     <div class="srow" style="margin-top:10px">
@@ -285,7 +201,7 @@
         <label><input type="radio" name="aimode" value="chapters"> 分章节</label>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
-        <button class="btn primary sm" id="aiGo">✨ 生成总结</button>
+        <button class="btn primary sm" id="aiGo">生成总结</button>
         <span class="shint" id="aiStatus" style="flex:1"></span>
       </div>
     </div>
@@ -293,15 +209,15 @@
       <textarea class="aiout" id="aiOut" placeholder="总结结果会显示在这里…" spellcheck="false"></textarea>
     </div>
     <div class="sbtns" style="margin-top:8px">
-      <button class="btn sm" id="aiCopy">📋 复制</button>
-      <button class="btn sm" id="aiSaveMd">💾 存为 .md</button>
+      <button class="btn sm" id="aiCopy">复制</button>
+      <button class="btn sm" id="aiSaveMd">存为 .md</button>
       <span style="flex:1"></span>
       <button class="btn sm" id="aiCancel">关闭</button>
     </div>
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status"></div>
 
 <script>
 const drop = document.getElementById('drop');
@@ -316,12 +232,22 @@ let searchKw = '';
 let sortAsc = false;
 const taskSearch = document.getElementById('taskSearch');
 const sortBtn = document.getElementById('sortBtn');
+const sortLabel = sortBtn.querySelector('span');
 const clearDoneBtn = document.getElementById('clearDone');
 
 let tasks = [];
 let expanded = new Set();
 let taskTimers = new Map();
 const HISTORY_KEY = 'shiyin-history-v1';
+
+function setServiceStatus(online) {
+  headStatus.dataset.state = online ? 'online' : 'offline';
+  headStatus.textContent = online ? '本地服务在线' : '服务未连接';
+}
+
+function icon(name) {
+  return '<svg class="icon" aria-hidden="true"><use href="#i-' + name + '"/></svg>';
+}
 
 function showToast(msg) {
   toast.textContent = msg;
@@ -466,7 +392,6 @@ document.getElementById('urlInput').addEventListener('keydown', (e) => { if (e.k
 
 ['dragover', 'dragenter'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('drag'); }));
 ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('drag'); }));
-drop.addEventListener('drop', (e) => uploadFiles([...e.dataTransfer.files]));
 
 // 全局拖拽：文件拖到页面任意位置都可上传（不只拖拽区），并给出视觉提示
 let dragDepth = 0;
@@ -521,8 +446,8 @@ async function pollTask(id) {
         clearInterval(timer);
         taskTimers.delete(id);
         pollFailCount.delete(id);
-        headStatus.textContent = '服务未连接';
-        showToast('⚠️ 服务未运行？请双击「启动拾音.bat」再刷新页面');
+        setServiceStatus(false);
+        showToast('请先通过拾音启动器启动服务，再刷新页面。');
       }
     }
   }, 1200);
@@ -533,13 +458,15 @@ async function loadServerTasks() {
   try {
     const r = await fetch('/api/tasks');
     const j = await r.json();
-    headStatus.textContent = '服务正常 · 排队 ' + j.queueLen;
+    setServiceStatus(true);
     for (const t of j.list) {
-      if (!tasks.some((x) => x.id === t.id)) tasks.push(t);
-      if (t.status === 'queued' || t.status === 'preprocess' || t.status === 'transcribing') pollTask(t.id);
+      const cached = tasks.find((x) => x.id === t.id);
+      if (cached) cached.mediaUrl = t.mediaUrl;
+      else tasks.push(t);
+      if (['queued', 'downloading', 'preprocess', 'transcribing'].includes(t.status)) pollTask(t.id);
     }
     render();
-  } catch { headStatus.textContent = '服务未连接'; }
+  } catch { setServiceStatus(false); }
 }
 
 // ---------- 渲染 ----------
@@ -548,11 +475,11 @@ function render() {
   clearDoneBtn.style.display = hasDone ? '' : 'none';
   const view = tasks.filter((t) => !searchKw || t.file.toLowerCase().includes(searchKw));
   if (sortAsc) view.sort((a, b) => a.createdAt - b.createdAt);
-  listTitle.textContent = tasks.length ? `任务列表（${view.length}/${tasks.length}）` : '任务列表';
-  sortBtn.textContent = sortAsc ? '⏱ 旧→新' : '⏱ 新→旧';
+  listTitle.textContent = searchKw ? `${view.length} / ${tasks.length} 项` : `${tasks.length} 项`;
+  sortLabel.textContent = sortAsc ? '最早优先' : '最新优先';
 
   if (!view.length) {
-    taskList.innerHTML = searchKw ? `<div class="empty">没有匹配「${esc(searchKw)}」的任务</div>` : '<div class="empty">还没有任务，拖入文件开始吧</div>';
+    taskList.innerHTML = `<div class="empty"><span class="file-mark">${icon('list')}</span><span>${searchKw ? `没有匹配「${esc(searchKw)}」的任务` : '添加文件或链接后，任务会出现在这里。'}</span></div>`;
     modelTick();
     return;
   }
@@ -564,17 +491,17 @@ function render() {
       if (t.result.noSpeech) {
         resultHtml = '<div class="result"><div class="rtabs"><span class="grow"></span><span class="rcount">' + (getResult(t, 'txt') || '').length + ' 字</span><button class="rtab act" data-copy="' + t.id + '">复制</button><button class="rtab act" data-save="' + t.id + '">保存</button></div><div class="nospeech">未检测到语音（可能是纯音乐 / 环境声 / 空白）——下方为识别到的内容，可手动确认</div><textarea data-tarea="' + t.id + '" spellcheck="false">' + esc(getResult(t, 'txt')) + '</textarea></div>';
       } else {
-        const tabs = [['txt', '全文'], ['read', '📖 跟读'], ['srt', 'SRT 字幕'], ['vtt', 'VTT 字幕']];
+        const tabs = [['txt', '全文'], ['read', '跟读'], ['srt', 'SRT 字幕'], ['vtt', 'VTT 字幕']];
         let curTab = t._tab || 'txt';
         if (curTab === 'read' && !getResult(t, 'srt') && !getResult(t, 'vtt')) curTab = 'txt';
         const count = curTab === 'read' ? (cueCache.get(t.id) || []).length + ' 段' : getResult(t, curTab).length + ' 字';
         resultHtml = `<div class="result">
           <div class="rtabs">
-            ${tabs.map(([k, label]) => `<button class="rtab ${k === curTab ? 'on' : ''}" data-tab="${k}" data-id="${t.id}">${label}</button>`).join('')}
+            ${tabs.map(([k, label]) => `<button class="rtab ${k === curTab ? 'on' : ''}" aria-pressed="${k === curTab}" data-tab="${k}" data-id="${t.id}">${label}</button>`).join('')}
             <span class="grow"></span>
             <span class="rcount">${count}</span>
-            <button class="rtab act" data-copy="${t.id}">✂ 复制</button>
-            <button class="rtab act" data-save="${t.id}">💾 保存</button>
+            <button class="rtab act" data-copy="${t.id}">复制</button>
+            <button class="rtab act" data-save="${t.id}">保存</button>
             <button class="rtab act" data-ai="${t.id}" title="字幕/全文一键总结（需先在 设置 配 AI 端点）">AI 总结</button>
           </div>
           ${(curTab === 'srt' || curTab === 'vtt') && getResult(t, curTab) ? `<div class="toolrow" data-tools="${t.id}">
@@ -583,22 +510,32 @@ function render() {
             <button class="rtab act" data-off="0.5" data-id="${t.id}">+0.5s</button>
             <input class="offin" data-offin="${t.id}" type="number" step="0.5" value="0" title="整体偏移秒数（正=延后，负=提前）">
             <button class="rtab act" data-offapply="${t.id}">应用</button>
-            <span class="rtab act" data-stats="${t.id}">统计</span>
-            <span class="rtab act" data-dl="${t.id}">下载 .${curTab}</span>
+            <button class="rtab act" data-stats="${t.id}">统计</button>
+            <button class="rtab act" data-dl="${t.id}">下载 .${curTab}</button>
           </div>` : ''}
-          ${curTab === 'read' ? renderReadTab(t) : `<textarea data-tarea="${t.id}" spellcheck="false">${esc(getResult(t, curTab))}</textarea>`}
+          ${curTab === 'read' ? renderReadTab(t) : `<textarea data-tarea="${t.id}" aria-label="编辑转写结果" spellcheck="false">${esc(getResult(t, curTab))}</textarea>`}
         </div>`;
       }
     }
     const pltName = { douyin: '抖音', kuaishou: '快手', bilibili: 'B站', youtube: 'YouTube', direct: '直链' }[t.platform] || '';
-    const errHtml = t.status === 'failed' && t.error ? `<div class="errmsg">❌ ${esc(t.error)}<button class="btn sm" style="margin-left:8px" data-retry="${t.id}">↻ 重试</button></div>` : '';
-    return `<div class="task" id="task-${t.id}">
+    const errHtml = t.status === 'failed' && t.error ? `<div class="errmsg">${esc(t.error)}<button class="btn sm" style="margin-left:8px" data-retry="${t.id}">重试</button></div>` : '';
+    const model = t.result?.model || t.model;
+    const meta = [t.sizeMB != null ? `${t.sizeMB} MB` : '', t.durationSec ? fmtDur(t.durationSec) : '',
+      model ? shortModel(model) : '', t.useVad ? 'VAD' : '', t.elapsedSec ? `用时 ${t.elapsedSec}s` : ''].filter(Boolean);
+    const name = t.result
+      ? `<button class="fname" title="${esc(t.file)}" aria-expanded="${!t._collapsed}" data-toggle="${t.id}">${esc(t.file)}</button>`
+      : `<span class="fname" title="${esc(t.file)}">${esc(t.file)}</span>`;
+    return `<div class="task${t._collapsed ? ' collapsed' : ''}" id="task-${t.id}">
       <div class="row1">
-        <span class="fname" title="点击展开/收起结果" data-toggle="${t.id}">${esc(t.file)}</span>${pltName ? `<span class="plt">${pltName}</span>` : ''}
-        <span class="fmeta">${t.sizeMB != null ? t.sizeMB + ' MB' : ''}${t.durationSec ? ' · ' + fmtDur(t.durationSec) : ''}${(t.result && t.result.model) || t.model ? ' · ' + shortModel((t.result && t.result.model) || t.model) : ''}${t.useVad ? ' · 🧹 VAD' : ''}${t.elapsedSec ? ' · 用时 ' + t.elapsedSec + 's' : ''}</span>
-        ${t.status === 'done' && t.outDir ? '<span class="fmeta" style="color:var(--ok)">📥 已落盘</span>' : ''}
+        <span class="file-mark">${icon('file')}</span>
+        <div class="file-info">${name}<div class="file-meta">
+          ${meta.length ? `<span class="fmeta">${esc(meta.join(' · '))}</span>` : ''}
+          ${pltName ? `<span class="plt">${pltName}</span>` : ''}
+          ${t.status === 'done' && t.outDir ? '<span class="fmeta saved">已保存</span>' : ''}
+          ${t.status === 'done' && t.mediaUrl ? `<button type="button" class="rtab act" data-media-clear="${t.id}">清理媒体</button>` : ''}
+        </div></div>
         ${st}
-        <button class="delbtn" title="删除任务" data-del="${t.id}">✕</button>
+        <button class="delbtn" title="删除任务" aria-label="删除任务" data-del="${t.id}">${icon('close')}</button>
       </div>
       <div class="bar" style="${t.status === 'done' || t.status === 'failed' ? 'display:none' : ''}"><i style="width:${prog}%"></i></div>
       ${resultHtml}${errHtml}
@@ -624,9 +561,10 @@ function render() {
 }
 
 function statusBadge(t) {
-  const map = { uploading: ['上传中', 'queued'], queued: ['排队中', 'queued'], preprocess: ['预处理', 'preprocess'], transcribing: ['识别中', 'transcribing'], done: ['完成', 'done'], failed: ['失败', 'failed'] };
+  const map = { uploading: ['上传中', 'queued'], downloading: ['下载中', 'downloading'], queued: ['排队中', 'queued'], preprocess: ['预处理', 'preprocess'], transcribing: ['识别中', 'transcribing'], done: ['完成', 'done'], failed: ['失败', 'failed'] };
   const [label, cls] = map[t.status] || [t.status, 'queued'];
-  return `<span class="badge ${cls}">${label}</span>`;
+  const percent = t.status === 'uploading' || t.status === 'transcribing' ? ` ${t.progress || 0}%` : '';
+  return `<span class="badge ${cls}">${esc(label + percent)}</span>`;
 }
 function shortModel(n) { return String(n).replace('ggml-', '').replace('.bin', ''); }
 function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -845,17 +783,41 @@ taskList.addEventListener('click', async (e) => {
   // 展开/收起
   const tg = e.target.closest('[data-toggle]');
   if (tg) {
-    const tid = tg.dataset.toggle;
-    const taskEl = document.getElementById('task-' + tid);
-    const res = taskEl && taskEl.querySelector('.result');
-    if (res) res.style.display = res.style.display === 'none' ? '' : 'none';
+    const task = tasks.find((x) => x.id === tg.dataset.toggle);
+    if (task?.result) {
+      task._collapsed = !task._collapsed;
+      tg.closest('.task').classList.toggle('collapsed', task._collapsed);
+      tg.setAttribute('aria-expanded', String(!task._collapsed));
+    }
+    return;
+  }
+  const clearMedia = e.target.closest('[data-media-clear]');
+  if (clearMedia) {
+    const task = tasks.find((x) => x.id === clearMedia.dataset.mediaClear);
+    if (!task?.mediaUrl || !window.confirm('清理这条任务的媒体缓存？字幕和文本仍可查看和导出，跟读播放将不可用。')) return;
+    clearMedia.disabled = true;
+    try {
+      const r = await fetch('/api/task/' + encodeURIComponent(task.id) + '/media', { method: 'DELETE' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || '媒体清理失败');
+      task.mediaUrl = null;
+      saveHistory();
+      render();
+      showToast('媒体缓存已清理');
+    } catch (err) {
+      showToast(err.message || '媒体清理失败');
+      clearMedia.disabled = false;
+    }
     return;
   }
   // 删除任务
   const del = e.target.closest('[data-del]');
   if (del) {
     const tid = del.dataset.del;
-    try { await fetch("/api/task/" + encodeURIComponent(tid), { method: "DELETE" }); } catch {} // 服务端清缓存媒体，失败不阻塞前端移除
+    try {
+      const r = await fetch('/api/task/' + encodeURIComponent(tid), { method: 'DELETE' });
+      if (!r.ok) { showToast((await r.json()).error || '任务删除失败'); return; }
+    } catch {} // 服务离线时仍可移除浏览器里的历史记录
     tasks = tasks.filter((x) => x.id !== tid);
     expanded.delete(tid);
     clearInterval(taskTimers.get(tid)); taskTimers.delete(tid);
@@ -1164,29 +1126,31 @@ function modelTick() { // 渲染任务时顺带刷新模型面板（下载进度
 }
 function renderModels(dl) {
   const vadDl = dl && dl.name === 'vad';
-  const vadBlock = vadData.downloaded
-    ? '<div class="model"><div class="mname">静音检测模型（VAD）</div><div class="minfo">0.9 MB · 跳过静音段，长音频/播客更快</div><div class="mrow"><span class="mstatus ok">✅ 已就绪</span></div></div>'
-    : '<div class="model"><div class="mname">静音检测模型（VAD）</div><div class="minfo">0.9 MB · 跳过静音段，长音频/播客更快</div><div class="mrow">' + (vadDl ? '<span class="mstatus off">下载中…</span>' : '<button class="btn sm" data-vad-dl="1">⬇ 下载</button>') + '</div></div>';
+  const vadAction = vadData.downloaded ? `<span class="mstatus ok">${icon('check')} 已就绪</span>`
+    : vadDl ? '<span class="mstatus off">下载中…</span>' : '<button class="btn sm" data-vad-dl="1">下载</button>';
+  const vadBlock = `<div class="model vad-model"><div><div class="mname">静音检测</div>
+    <div class="minfo">VAD · 0.9 MB</div></div><div class="mrow">${vadAction}</div></div>`;
+  const names = { 'ggml-base.bin': '极速 Base', 'ggml-small.bin': '均衡 Small', 'ggml-large-v3-turbo-q5_0.bin': '高精度 Turbo' };
   modelList.innerHTML = models.map((m) => {
     const isDl = dl && dl.name === m.name;
     let action;
     if (m.downloaded) {
       action = m.active
-        ? '<span class="mstatus ok">✅ 使用中</span>'
-        : '<button class="btn sm primary" data-use="' + m.name + '">使用</button>';
+        ? `<span class="mstatus ok">${icon('check')} 使用中</span>`
+        : '<button class="btn sm" data-use="' + esc(m.name) + '">使用</button>';
     } else {
       action = isDl
         ? '<span class="mstatus off">下载中 ' + dl.progress + '%</span>'
-        : '<button class="btn sm" data-dl-model="' + m.name + '">⬇ 下载</button>';
+        : '<button class="btn sm" data-dl-model="' + esc(m.name) + '">下载</button>';
     }
     const bar = isDl
       ? '<div class="mbar"><i style="width:' + dl.progress + '%"></i></div><div class="mspeed">' + (dl.speedMBs ? dl.speedMBs.toFixed(1) + ' MB/s' : '连接中…') + '</div>'
       : '';
-    return '<div class="model ' + (m.active ? 'active' : '') + '">' +
-      '<div class="mname">' + m.name + '</div>' +
-      '<div class="minfo">' + m.sizeMB + ' MB · ' + m.desc + (m.active ? ' · 当前' : '') + '</div>' +
-      '<div class="mrow">' + action + '</div>' + bar +
-    '</div>';
+    const description = m.downloaded ? '已安装' : '待下载';
+    return `<div class="model${m.active ? ' active' : ''}">
+      <div><div class="mname" title="${esc(m.name)}">${esc(names[m.name] || m.name)}</div>
+      <div class="minfo">${m.sizeMB} MB · ${description}</div></div>
+      <div class="mrow">${action}</div>${bar}</div>`;
   }).join('') + vadBlock;
   const cb = document.getElementById('useVad');
   const hint = document.getElementById('vadHint');

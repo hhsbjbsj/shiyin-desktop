@@ -8,7 +8,7 @@ THIRD-PARTY NOTICES
 1. whisper.cpp（语音识别引擎）
    - 仓库：https://github.com/ggerganov/whisper.cpp
    - 许可证：MIT License
-   - 用途：核心语音转文字推理引擎（本地运行，二进制随项目分发于 bin/ 或独立部署）
+   - 用途：核心语音转文字推理引擎（首次运行时从官方 Release 下载，或使用已有引擎）
    - 版权：Copyright (c) 2022 Georgi Gerganov
 
 2. Node.js 运行时与 npm 依赖包
@@ -28,8 +28,10 @@ THIRD-PARTY NOTICES
    - 使用系统字体栈（Microsoft YaHei / system-ui），无字体文件分发
    - PWA 使用浏览器标准 API（Service Worker / Manifest / Web Audio），无第三方代码引入
 
-5. 工具链（仅开发/构建期）
-   - ffmpeg（媒体预处理/图标缩放）— LGPL/GPL
+5. 运行工具和桌面运行时
+   - FFmpeg（媒体预处理）— 从 FFmpeg-Builds 下载 LGPL 构建，源码及构建配置见 https://github.com/FFmpeg-Builds/FFmpeg-Builds
+   - yt-dlp（链接音轨下载）— 从 https://github.com/yt-dlp/yt-dlp 的官方 Release 下载
+   - Windows 包包含 Node.js 和 .NET 桌面运行时，其许可见包内 Node-LICENSE.txt 和 Dotnet-LICENSE.txt
    - Edge/Chromium headless（图标透明背景渲染）
 
 本项目的自有代码、文档、图标均以 MIT License 发布，详见 LICENSE 文件。

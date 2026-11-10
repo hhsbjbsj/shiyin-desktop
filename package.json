@@ -1,6 +1,6 @@
 {
   "name": "shiyin",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "拾音 · 本地音频/视频/链接转文字（whisper.cpp 引擎，纯本地离线，文件不出电脑）",
   "main": "server.js",
   "scripts": {
