@@ -1,0 +1,182 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 095a279..3b09c62 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -129,6 +129,13 @@ endif()
+ find_package(Threads REQUIRED)
+ target_link_libraries(whisper PUBLIC ggml Threads::Threads)
+ 
++if (GGML_OPENMP)
++    find_package(OpenMP QUIET COMPONENTS CXX)
++    if (OpenMP_CXX_FOUND)
++        target_link_libraries(whisper PRIVATE OpenMP::OpenMP_CXX)
++    endif()
++endif()
++
+ if (WHISPER_COREML)
+     target_link_libraries(whisper PRIVATE whisper.coreml)
+ endif()
+diff --git a/src/whisper.cpp b/src/whisper.cpp
+index 5b6e4b4..cd2d900 100644
+--- a/src/whisper.cpp
++++ b/src/whisper.cpp
+@@ -3465,7 +3465,7 @@ struct whisper_state * whisper_init_state(whisper_context * ctx) {
+     state->decoders[0].probs.reserve    (ctx->vocab.n_vocab);
+     state->decoders[0].logits.reserve   (ctx->vocab.n_vocab);
+     state->decoders[0].logprobs.reserve (ctx->vocab.n_vocab);
+-    state->decoders[0].logits_id.reserve(ctx->model.hparams.n_vocab);
++    state->decoders[0].logits_id.reserve(g_lang.size());
+ 
+     state->decoders[0].rng = std::mt19937(0);
+ 
+@@ -6483,34 +6483,15 @@ static whisper_token_data whisper_sample_token(
+ 
+ static std::vector<whisper_token_data> whisper_sample_token_topk(
+             whisper_context & ctx,
+-            whisper_decoder & decoder,
++      const whisper_decoder & decoder,
+                         int   k) {
+     const auto & vocab = ctx.vocab;
+ 
+     const auto & probs    = decoder.probs;
+-    const auto & logits   = decoder.logits;
+     const auto & logprobs = decoder.logprobs;
+ 
+     const int n_logits = vocab.n_vocab;
+ 
+-    auto & logits_id = decoder.logits_id;
+-
+-    logits_id.resize(n_logits);
+-    for (int i = 0; i < n_logits; ++i) {
+-        logits_id[i].first = logits[i];
+-        logits_id[i].second = i;
+-    }
+-
+-    {
+-        using pair_type = std::remove_reference<decltype(logits_id)>::type::value_type;
+-        std::partial_sort(
+-                logits_id.begin(),
+-                logits_id.begin() + k, logits_id.end(),
+-                [](const pair_type & a, const pair_type & b) {
+-            return a.first > b.first;
+-        });
+-    }
+-
+     std::vector<whisper_token_data> result;
+     result.reserve(k);
+ 
+@@ -6539,6 +6520,7 @@ static std::vector<whisper_token_data> whisper_sample_token_topk(
+         ptsum = sum_ts;
+     }
+ 
++    // The distribution consumes probabilities in vocabulary order.
+     std::discrete_distribution<> dist(probs.begin(), probs.end());
+ 
+     for (int i = 0; i < k; ++i) {
+@@ -6789,6 +6771,31 @@ static bool whisper_vad(
+     return true;
+ }
+ 
++template<typename Function>
++static void whisper_run_decoder_workers(int n_threads, const Function & process) {
++    if (n_threads <= 1) {
++        process();
++        return;
++    }
++
++#ifdef _OPENMP
++    // Reuse the OpenMP workers across tokens instead of creating OS threads per token.
++    #pragma omp parallel num_threads(n_threads)
++    {
++        process();
++    }
++#else
++    std::vector<std::thread> threads(n_threads - 1);
++    for (auto & thread : threads) {
++        thread = std::thread(process);
++    }
++    process();
++    for (auto & thread : threads) {
++        thread.join();
++    }
++#endif
++}
++
+ int whisper_full_with_state(
+         struct whisper_context * ctx,
+           struct whisper_state * state,
+@@ -6889,8 +6896,6 @@ int whisper_full_with_state(
+         decoder.probs.resize   (ctx->vocab.n_vocab);
+         decoder.logits.resize  (ctx->vocab.n_vocab);
+         decoder.logprobs.resize(ctx->vocab.n_vocab);
+-        decoder.logits_id.reserve(ctx->model.hparams.n_vocab);
+-
+         decoder.rng = std::mt19937(j);
+     }
+ 
+@@ -7191,7 +7196,6 @@ int whisper_full_with_state(
+                 }
+ 
+                 // sampling
+-                // TODO: avoid memory allocations, optimize, avoid threads?
+                 {
+                     std::atomic<int> j_cur(0);
+ 
+@@ -7234,23 +7238,7 @@ int whisper_full_with_state(
+                         }
+                     };
+ 
+-                    const int n_threads = std::min(params.n_threads, n_decoders_cur);
+-
+-                    if (n_threads == 1) {
+-                        process();
+-                    } else {
+-                        std::vector<std::thread> threads(n_threads - 1);
+-
+-                        for (int t = 0; t < n_threads - 1; ++t) {
+-                            threads[t] = std::thread(process);
+-                        }
+-
+-                        process();
+-
+-                        for (int t = 0; t < n_threads - 1; ++t) {
+-                            threads[t].join();
+-                        }
+-                    }
++                    whisper_run_decoder_workers(std::min(params.n_threads, n_decoders_cur), process);
+                 }
+ 
+                 beam_candidates.clear();
+@@ -7462,7 +7450,6 @@ int whisper_full_with_state(
+ 
+                     const int64_t t_start_sample_us = ggml_time_us();
+ 
+-                    // TODO: avoid memory allocations, optimize, avoid threads?
+                     {
+                         std::atomic<int> j_cur(0);
+ 
+@@ -7484,23 +7471,7 @@ int whisper_full_with_state(
+                             }
+                         };
+ 
+-                        const int n_threads = std::min(params.n_threads, n_decoders_cur);
+-
+-                        if (n_threads == 1) {
+-                            process();
+-                        } else {
+-                            std::vector<std::thread> threads(n_threads - 1);
+-
+-                            for (int t = 0; t < n_threads - 1; ++t) {
+-                                threads[t] = std::thread(process);
+-                            }
+-
+-                            process();
+-
+-                            for (int t = 0; t < n_threads - 1; ++t) {
+-                                threads[t].join();
+-                            }
+-                        }
++                        whisper_run_decoder_workers(std::min(params.n_threads, n_decoders_cur), process);
+                     }
+ 
+                     state->t_sample_us += ggml_time_us() - t_start_sample_us;
