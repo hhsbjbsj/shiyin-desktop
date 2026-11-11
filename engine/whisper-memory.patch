@@ -1,0 +1,106 @@
+diff --git a/examples/cli/cli.cpp b/examples/cli/cli.cpp
+index 9a54742..665b9f9 100644
+--- a/examples/cli/cli.cpp
++++ b/examples/cli/cli.cpp
+@@ -1265,6 +1265,15 @@ int main(int argc, char ** argv) {
+                 wparams.abort_callback_user_data = &is_aborted;
+             }
+ 
++            if (params.n_processors == 1 && !wparams.vad && !wparams.token_timestamps && !pcmf32.empty()) {
++                // The decoder can reuse the mel features without keeping the waveform alive.
++                if (whisper_pcm_to_mel(ctx, pcmf32.data(), pcmf32.size(), wparams.n_threads) != 0) {
++                    fprintf(stderr, "%s: failed to compute audio features\n", argv[0]);
++                    return 10;
++                }
++                std::vector<float>().swap(pcmf32);
++            }
++
+             if (whisper_full_parallel(ctx, wparams, pcmf32.data(), pcmf32.size(), params.n_processors) != 0) {
+                 fprintf(stderr, "%s: failed to process audio\n", argv[0]);
+                 return 10;
+diff --git a/src/whisper.cpp b/src/whisper.cpp
+index 5b6e4b4..bde9fba 100644
+--- a/src/whisper.cpp
++++ b/src/whisper.cpp
+@@ -3101,7 +3101,7 @@ static void fft(float* in, int N, float* out) {
+     }
+ }
+ 
+-static void log_mel_spectrogram_worker_thread(int ith, const float * hann, const std::vector<float> & samples,
++static void log_mel_spectrogram_worker_thread(int ith, const float * hann, const float * samples,
+                                               int n_samples, int frame_size, int frame_step, int n_threads,
+                                               const whisper_filters & filters, whisper_mel & mel) {
+     std::vector<float> fft_in(frame_size * 2, 0.0);
+@@ -3113,18 +3113,21 @@ static void log_mel_spectrogram_worker_thread(int ith, const float * hann, const
+     // make sure n_fft == 1 + (WHISPER_N_FFT / 2), bin_0 to bin_nyquist
+     assert(n_fft == 1 + (frame_size / 2));
+ 
+-    // calculate FFT only when fft_in are not all zero
+-    for (; i < std::min(n_samples / frame_step + 1, mel.n_len); i += n_threads) {
+-        const int offset = i * frame_step;
++    const int pad = frame_size / 2;
++    const int last_frame = std::min<int64_t>((int64_t(n_samples) + pad) / frame_step + 1, mel.n_len);
++    for (; i < last_frame; i += n_threads) {
++        const int64_t offset = int64_t(i) * frame_step - pad;
+ 
+-        // apply Hann window (~10% faster)
+-        for (int j = 0; j < std::min(frame_size, n_samples - offset); j++) {
+-            fft_in[j] = hann[j] * samples[offset + j];
+-        }
+-
+-        // fill the rest with zeros
+-        if (n_samples - offset < frame_size) {
+-            std::fill(fft_in.begin() + (n_samples - offset), fft_in.end(), 0.0);
++        if (offset >= 0 && offset + frame_size <= n_samples) {
++            for (int j = 0; j < frame_size; j++) {
++                fft_in[j] = hann[j] * samples[offset + j];
++            }
++        } else {
++            // Read reflected/zero padding only for windows crossing an edge.
++            for (int j = 0; j < frame_size; j++) {
++                const int64_t index = std::abs(offset + j);
++                fft_in[j] = index < n_samples ? hann[j] * samples[index] : 0.0f;
++            }
+         }
+ 
+         // FFT
+@@ -3189,21 +3192,10 @@ static bool log_mel_spectrogram(
+     int64_t stage_1_pad = WHISPER_SAMPLE_RATE * 30;
+     int64_t stage_2_pad = frame_size / 2;
+ 
+-    // Initialize a vector and copy data from C array to it.
+-    std::vector<float> samples_padded;
+-    samples_padded.resize(n_samples + stage_1_pad + stage_2_pad * 2);
+-    std::copy(samples, samples + n_samples, samples_padded.begin() + stage_2_pad);
+-
+-    // pad 30 seconds of zeros at the end of audio (480,000 samples) + reflective pad 200 samples at the end of audio
+-    std::fill(samples_padded.begin() + n_samples + stage_2_pad, samples_padded.begin() + n_samples + stage_1_pad + 2 * stage_2_pad, 0);
+-
+-    // reflective pad 200 samples at the beginning of audio
+-    std::reverse_copy(samples + 1, samples + 1 + stage_2_pad, samples_padded.begin());
+-
+     mel.n_mel     = n_mel;
+     // https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/SpectralOps.cpp#L936
+     // Calculate number of frames + remove the last frame
+-    mel.n_len     = (samples_padded.size() - frame_size) / frame_step;
++    mel.n_len     = (n_samples + stage_1_pad + 2 * stage_2_pad - frame_size) / frame_step;
+     // Calculate semi-padded sample length to ensure compatibility
+     mel.n_len_org = 1 + (n_samples + stage_2_pad - frame_size) / frame_step;
+     mel.data.resize(mel.n_mel * mel.n_len);
+@@ -3212,13 +3204,13 @@ static bool log_mel_spectrogram(
+         std::vector<std::thread> workers(n_threads - 1);
+         for (int iw = 0; iw < n_threads - 1; ++iw) {
+             workers[iw] = std::thread(
+-                    log_mel_spectrogram_worker_thread, iw + 1, hann, std::cref(samples_padded),
+-                    n_samples + stage_2_pad, frame_size, frame_step, n_threads,
++                    log_mel_spectrogram_worker_thread, iw + 1, hann, samples,
++                    n_samples, frame_size, frame_step, n_threads,
+                     std::cref(filters), std::ref(mel));
+         }
+ 
+         // main thread
+-        log_mel_spectrogram_worker_thread(0, hann, samples_padded, n_samples + stage_2_pad, frame_size, frame_step, n_threads, filters, mel);
++        log_mel_spectrogram_worker_thread(0, hann, samples, n_samples, frame_size, frame_step, n_threads, filters, mel);
+ 
+         for (int iw = 0; iw < n_threads - 1; ++iw) {
+             workers[iw].join();
